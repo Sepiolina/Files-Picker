@@ -1,0 +1,8 @@
+# Windows scripts need CRLF; shell scripts need LF - whatever the checkout OS.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.sh  text eol=lf
+*.go  text eol=lf
+*.py  text eol=lf
+*.png binary
+*.ico binary

@@ -1,0 +1,86 @@
+# Tests. Runs on pull requests, on pushes to branches other than main, and is also
+# called by build.yml (so main and release tags are tested before anything is packaged).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Engine tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache: false            # the engine has no dependencies to cache
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - name: Cross-compile for every platform
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          chmod +x build.sh
+          ./build.sh all
+
+  gui:
+    name: GUI tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  python: "3.10" }
+          - { os: ubuntu-latest,  python: "3.12" }
+          - { os: windows-latest, python: "3.12" }
+          - { os: macos-latest,   python: "3.12" }
+    defaults:
+      run:
+        shell: bash
+    env:
+      QT_QPA_PLATFORM: offscreen   # no display needed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: gui/requirements.txt
+      - name: System libraries for Qt
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0
+      - run: python -m pip install -r gui/requirements.txt
+      - name: Build the engine (the tests compare it with the Python scanner)
+        run: |
+          chmod +x build.sh
+          ./build.sh
+      - name: Unit tests
+        run: python -m unittest discover -v gui/tests
+      - name: Self-test (engine, analysis commands, report support)
+        run: python gui/run_gui.py --check

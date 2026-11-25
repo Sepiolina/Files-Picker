@@ -1,0 +1,8 @@
+gui/bin/
+dist/
+__pycache__/
+*.pyc
+*.partial
+build/
+*.spec
+.venv-build/
