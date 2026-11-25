@@ -471,7 +471,8 @@ class SnapshotPage(QWidget):
         rows = self.changes.model.rows
         counts = {k: sum(1 for r in rows if r.kind == k) for k in KIND}
         base = self.baseline.currentText() if self.baseline.isEnabled() else ""
-        rep = R.Report(f"Folder changes — {os.path.basename(m['root'].rstrip('/\\')) or m['root']}", m["root"])
+        folder_name = os.path.basename(m["root"].rstrip("/\\")) or m["root"]   # (no backslash inside an f-string: Python < 3.12)
+        rep = R.Report(f"Folder changes — {folder_name}", m["root"])
         rep.text(f"Scanned {when(m['time'], '%A %d %B %Y, %H:%M')}: {fmt_int(m['files'])} files in {fmt_int(m['dirs'])} "
                  f"folders, {fmt_size(m['bytes'])}." + (f"  Compared with: {base}." if base else ""))
         if base:
