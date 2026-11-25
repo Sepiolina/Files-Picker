@@ -1,6 +1,5 @@
 # File Picker
 
-[![CI](https://github.com/Sepiolina/Files-Picker/actions/workflows/ci.yml/badge.svg)](https://github.com/Sepiolina/Files-Picker/actions/workflows/ci.yml)
 [![Build](https://github.com/Sepiolina/Files-Picker/actions/workflows/build.yml/badge.svg)](https://github.com/Sepiolina/Files-Picker/actions/workflows/build.yml)
 
 **File Picker** is a desktop application for finding and exporting files from large directory structures.
