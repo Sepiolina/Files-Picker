@@ -8,11 +8,11 @@ Colours always come from theme.current / the stylesheet, icons from icons.bind
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QPainter, QPen
 from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QPlainTextEdit, QPushButton, QSizePolicy, QStackedWidget, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QPlainTextEdit, QPushButton, QSizePolicy, QStackedWidget,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from . import icons, theme
 
@@ -652,23 +652,64 @@ class Checklist(QWidget):
 
 
 class EmptyState(QWidget):
-    def __init__(self, title, body, icon_name="history", parent=None):
+    """
+    Centered placeholder for a tab that has nothing to show yet: icon, title, a short description and an
+    optional action button. The button can change as the user progresses (see set_action).
+    """
+    BODY_W = 400
+
+    def __init__(self, title, body, icon_name="history", action_text="", on_action=None, action_icon=None, parent=None):
         super().__init__(parent)
+        self._callback = on_action
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 12, 24, 12)
         lay.addStretch(1)
-        hero = QLabel()
-        hero.setObjectName("HeroIcon")
-        hero.setAlignment(Qt.AlignCenter)
-        icons.bind(hero, icon_name, "accent", size=26, stroke=2)
-        lay.addWidget(hero, 0, Qt.AlignHCenter)
+        self.hero = QLabel()
+        self.hero.setObjectName("HeroIcon")
+        self.hero.setAlignment(Qt.AlignCenter)
+        icons.bind(self.hero, icon_name, "accent", size=26, stroke=2)
+        lay.addWidget(self.hero, 0, Qt.AlignHCenter)
         lay.addSpacing(16)
-        t = label(title, "H2")
-        b = label(body, "Muted", wrap=True)
-        b.setFixedWidth(380)
-        for w in (t, b):
+        self.title = label(title, "H2")
+        self.body = label(body, "Muted", wrap=True)
+        self.body.setFixedWidth(self.BODY_W)
+        for w in (self.title, self.body):
             w.setAlignment(Qt.AlignCenter)
             lay.addWidget(w, 0, Qt.AlignHCenter)
+        lay.insertSpacing(lay.indexOf(self.body), 6)
+        self.action = button("", action_icon, "Primary")
+        self.action.setMinimumWidth(190)
+        self.action.clicked.connect(lambda: self._callback and self._callback())
+        lay.addSpacing(18)
+        lay.addWidget(self.action, 0, Qt.AlignHCenter)
         lay.addStretch(2)
+        self.set_action(action_text, on_action, action_icon)
+
+    def set_action(self, text, callback=None, icon_name=None):
+        """Change the button (text and what it does); an empty text hides it."""
+        self._callback = callback
+        self.action.setText(text)
+        self.action.setVisible(bool(text))
+        if icon_name:
+            icons.bind(self.action, icon_name, "on_accent", size=16)
+        self._fit()
+
+    def _fit(self):
+        # A word-wrapped QLabel inside a box layout is given the height of one line when the layout measures it
+        # at the page width. Fix the height from the real wrapped size instead (needs the final font, so this
+        # also runs when the widget is shown and when the theme changes).
+        h = self.body.heightForWidth(self.BODY_W)
+        if h > 0 and self.body.height() != h:
+            self.body.setFixedHeight(h)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._fit()
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() in (QEvent.StyleChange, QEvent.FontChange):
+            QTimer.singleShot(0, self._fit)
 
 
 def debounce(parent, ms, fn):

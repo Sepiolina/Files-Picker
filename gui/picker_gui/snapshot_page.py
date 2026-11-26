@@ -9,17 +9,19 @@ import os
 from collections import namedtuple
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame, QMessageBox, QProgressBar, QScrollArea,
-                               QSplitter, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFrame, QListWidget,
+                               QListWidgetItem, QMenu, QMessageBox, QProgressBar, QSizePolicy, QSplitter, QStackedWidget,
+                               QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
-from . import charts, fscore as F, report as R
+from . import charts, fscore as F, report as R, theme
 from .jobs import Worker, describe
 from .models import TableModel
 from .preview import PreviewPanel, attach_preview
 from .result_table import ResultTable
 from .util import fmt_duration, fmt_int, fmt_size, open_file, reveal, scan_note
-from .widgets import Banner, Chip, EmptyState, Panel, PathField, Segmented, StatTile, button, hbox, label
+from .widgets import Banner, ElidedLabel, EmptyState, Panel, PathField, Segmented, StatTile, button, hbox, label
 
 Change = namedtuple("Change", "kind rel size mtime detail")
 KIND = {"added": ("Added", "success"), "removed": ("Removed", "danger"), "modified": ("Modified", "warn"),
@@ -31,45 +33,74 @@ def when(t, fmt="%d %b %Y, %H:%M"):
     return datetime.fromtimestamp(t).strftime(fmt)
 
 
+def when_short(t):
+    """'25 Nov, 12:38' for this year, '25 Nov 2025, 12:38' otherwise - short enough for a narrow combo box."""
+    same_year = datetime.fromtimestamp(t).year == datetime.now().year
+    return when(t, "%d %b, %H:%M" if same_year else "%d %b %Y, %H:%M")
+
+
 def fmt_mtime(ns):
     return datetime.fromtimestamp(ns / 1e9).strftime("%d %b %Y %H:%M") if ns else ""
 
 
-class SnapshotModel(TableModel):
-    COLUMNS = ["Scanned", "Folder", "Files", "Size", "Changes since previous", "Contents", "Took"]
+def _color(key):
+    return QColor(theme.current.get(key, key))
 
-    def cell(self, m, c):
-        if c == 0:
-            return when(m["time"])
-        if c == 1:
-            return m["root"]
-        if c == 2:
-            return fmt_int(m["files"])
-        if c == 3:
-            return fmt_size(m["bytes"])
-        if c == 4:
-            s = m.get("summary")
-            if not s:
-                return "First scan"
-            parts = [f"+{s['added']}" if s["added"] else "", f"−{s['removed']}" if s["removed"] else "",
-                     f"~{s['modified']}" if s["modified"] else "", f"↔{s['moved']}" if s["moved"] else ""]
-            return "  ".join(p for p in parts if p) or "No changes"
-        if c == 5:
-            return "Checksums" if m.get("hashed") else "Size + date"
-        return fmt_duration(m["elapsed"] * 1000)
 
-    def sort_key(self, m, c):
-        return {0: m["time"], 2: m["files"], 3: m["bytes"], 6: m["elapsed"]}.get(c, self.cell(m, c).lower())
+def folder_name(root):
+    return os.path.basename(root.rstrip("/\\")) or root
 
-    def color(self, m, c):
-        if c == 4:
-            s = m.get("summary")
-            return "muted" if not s else ("success" if not any(s[k] for k in ("added", "removed", "modified", "moved"))
-                                          else "warn")
-        return "muted" if c in (0, 3, 5, 6) else None
 
-    def is_numeric(self, c):
-        return c in (2, 3, 6)
+class ScanDelegate(QStyledItemDelegate):
+    """One scan in the history list: date, folder / size, and what changed since the scan before it."""
+    ROW_H = 62
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width(), self.ROW_H)
+
+    def paint(self, p, option, index):
+        m = index.data(Qt.UserRole)
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(option.rect).adjusted(4, 3, -4, -3)
+        if option.state & QStyle.State_Selected:
+            p.setPen(QPen(_color("accent"), 1.3))
+            p.setBrush(_color("accent_soft"))
+            p.drawRoundedRect(r, 9, 9)
+        elif option.state & QStyle.State_MouseOver:
+            p.setPen(Qt.NoPen)
+            p.setBrush(_color("surface2"))
+            p.drawRoundedRect(r, 9, 9)
+        x, w = r.left() + 12, r.width() - 24
+        bold = QFont(option.font)
+        bold.setPixelSize(13)
+        bold.setBold(True)
+        p.setFont(bold)
+        p.setPen(_color("text"))
+        p.drawText(QRectF(x, r.top() + 5, w, 18), Qt.AlignLeft | Qt.AlignVCenter, when(m["time"]))
+        small = QFont(option.font)
+        small.setPixelSize(12)
+        p.setFont(small)
+        p.setPen(_color("muted"))
+        info = f"{folder_name(m['root'])}  ·  {fmt_int(m['files'])} files  ·  {fmt_size(m['bytes'])}"
+        p.drawText(QRectF(x, r.top() + 23, w, 16), Qt.AlignLeft | Qt.AlignVCenter,
+                   QFontMetrics(small).elidedText(info, Qt.ElideRight, int(w)))
+        s = m.get("summary")
+        if s is None:
+            parts = [("First scan", "faint")]
+        else:
+            parts = [(f"+{s['added']}", "success")] * bool(s["added"]) + [(f"−{s['removed']}", "danger")] * bool(s["removed"]) \
+                + [(f"~{s['modified']}", "warn")] * bool(s["modified"]) + [(f"↔{s['moved']}", "#8B5CF6")] * bool(s["moved"])
+            parts = parts or [("No changes", "success")]
+        small.setBold(True)
+        p.setFont(small)
+        fm = QFontMetrics(small)
+        cx = x
+        for text, color in parts:
+            p.setPen(_color(color))
+            p.drawText(QRectF(cx, r.top() + 39, w, 16), Qt.AlignLeft | Qt.AlignVCenter, text)
+            cx += fm.horizontalAdvance(text) + 12
+        p.restore()
 
 
 class ChangeModel(TableModel):
@@ -125,63 +156,107 @@ class SnapshotPage(QWidget):
         self._files = {}        # snapshot id -> files (small in-memory cache)
         self._token = 0
 
-        # ---- controls --------------------------------------------------------
-        self.path = PathField(PathField.FOLDER, "Folder to scan — everything inside it is logged")
+        # ================= left column: start a scan, browse the history =================
+        self.path = PathField(PathField.FOLDER, "Folder to scan")
         self.path.changed.connect(lambda _=None: self.changed.emit())
-        self.hashed = QCheckBox("Read file contents (exact change && move detection, slower)")
-        self.hashed.setToolTip("Computes a checksum for each file. Unchanged files are not read again on later scans.")
+        self.hashed = QCheckBox("Exact mode (read file contents)")
+        self.hashed.setToolTip("Computes a checksum for every file, so edits and renames are detected exactly.\n"
+                               "Slower the first time; unchanged files are not re-read on later scans.")
         self.skip_hidden = QCheckBox("Skip hidden && system files")
         self.skip_hidden.setChecked(True)
+        self.options_btn = button("Scan options…", kind="Link", tooltip="Ignore rules, cloud files, engine")
+        self.options_btn.clicked.connect(self.settings_requested.emit)
         self.scan_btn = button("Scan folder", "scan", "Primary")
         self.scan_btn.setProperty("large", True)
-        self.scan_btn.setMinimumWidth(140)
+        self.scan_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cancel_btn = button("Cancel", "x")
         self.cancel_btn.hide()
         self.scan_btn.clicked.connect(self.start)
         self.cancel_btn.clicked.connect(lambda: self.worker and self.worker.cancel())
-        self.options_btn = button("Ignore rules && scan options…", kind="Link")
-        self.options_btn.clicked.connect(self.settings_requested.emit)
-
-        controls = Panel(margins=(18, 16, 18, 16))
-        controls.lay.setSpacing(12)
-        controls.lay.addWidget(label("Folder", "FieldLabel"))
-        controls.lay.addWidget(self.path)
-        controls.lay.addLayout(hbox(self.hashed, 12, self.skip_hidden, 4, self.options_btn, None, self.cancel_btn,
-                                    self.scan_btn, spacing=10))
-
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setTextVisible(False)
-        self.status = label("", "Hint")
-        self.banner = Banner()
+        self.status = label("", "Hint", wrap=True)
+        self.progress.hide()
+        self.status.hide()
 
-        # ---- snapshot list ----------------------------------------------------------
-        self.table = ResultTable(SnapshotModel(), path_cols=(1,), stretch_col=1, sort=(0, Qt.DescendingOrder),
-                                 placeholder="Filter scans…", min_height=120)
-        self.table.selection_changed.connect(self._selected_changed)
+        new_card = Panel(margins=(16, 14, 16, 14))
+        nl = new_card.lay
+        nl.setSpacing(8)
+        nl.addLayout(hbox(label("New scan", "SectionTitle"), None, self.options_btn))
+        nl.addWidget(self.path)
+        nl.addWidget(self.hashed)
+        nl.addWidget(self.skip_hidden)
+        nl.addSpacing(2)
+        nl.addLayout(hbox(self.cancel_btn, self.scan_btn, spacing=8))
+        nl.addWidget(self.progress)
+        nl.addWidget(self.status)
 
-        # ---- details ------------------------------------------------------------------
+        self.folder_filter = QComboBox()
+        self.folder_filter.setToolTip("Show the scans of one folder")
+        self.folder_filter.activated.connect(lambda _: self.refresh())
+        self.history_count = label("", "Hint")
+        self.list = QListWidget()
+        self.list.setItemDelegate(ScanDelegate(self.list))
+        self.list.setMouseTracking(True)
+        self.list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.list.setFrameShape(QFrame.NoFrame)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setStyleSheet("QListWidget { background: transparent; border: none; outline: 0; }")
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
+        self.list.currentItemChanged.connect(self._user_selected)
+        self.history_hint = label("Your scans will appear here.", "Hint")
+        self.history_hint.setAlignment(Qt.AlignCenter)
+
+        hist_card = Panel(margins=(10, 14, 10, 10))
+        hl = hist_card.lay
+        hl.setSpacing(8)
+        hl.addLayout(hbox(label("Scan history", "SectionTitle"), None, self.history_count, margins=(6, 0, 6, 0)))
+        hl.addWidget(self.folder_filter)
+        hl.addWidget(self.list, 1)
+        hl.addWidget(self.history_hint)
+
+        side = QWidget()
+        side.setMinimumWidth(290)
+        side.setMaximumWidth(460)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(12)
+        sl.addWidget(new_card)
+        sl.addWidget(hist_card, 1)
+
+        # ================= right pane: what changed =================
         self.d_title = label("", "H2")
-        self.d_sub = label("", "Hint", wrap=True)
+        self.d_path = ElidedLabel("", Qt.ElideMiddle, "Hint")
+        self.d_stats = ElidedLabel("", Qt.ElideRight, "Hint")
         self.again_btn = button("Scan again", "refresh", "Primary",
                                 tooltip="Scan this folder now and compare with the previous scan")
         self.reveal_btn = button("Open folder", "folder")
-        self.log_btn = button("Export log", "download", tooltip="Every file in this scan, as CSV")
-        self.changes_btn = button("Export changes", "download", tooltip="The changes listed below, as CSV")
-        self.report_btn = button("Report", "file-text", tooltip="Save a shareable HTML or PDF report")
-        self.report_btn.clicked.connect(self._report)
-        self.delete_btn = button("Delete", "trash", "Danger")
+        self.delete_btn = button("Delete", "trash", "Danger", tooltip="Delete this scan (your files are not touched)")
         self.again_btn.clicked.connect(self._scan_again)
         self.reveal_btn.clicked.connect(lambda: self._sel() and reveal(self._sel()["root"]))
-        self.log_btn.clicked.connect(self._export_log)
-        self.changes_btn.clicked.connect(self._export_changes)
         self.delete_btn.clicked.connect(self._delete)
+
         self.baseline = QComboBox()
-        self.baseline.setMinimumWidth(340)
+        self.baseline.setMinimumWidth(190)
+        self.baseline.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.baseline.activated.connect(lambda _: self._load_diff())
+        self.history_btn = button("", "history", tooltip="Chart this folder's file count and size over time")
+        self.history_btn.setFixedWidth(42)
+        self.history_btn.setCheckable(True)
+        self.history_btn.toggled.connect(lambda _: (self._draw_trend(), self.changed.emit()))
+        self.report_btn = button("Report", "file-text", tooltip="Save a shareable HTML or PDF report")
+        self.report_btn.clicked.connect(self._report)
+        self.export_btn = button("Export", "download", tooltip="Save as CSV")
+        export_menu = QMenu(self.export_btn)
+        export_menu.addAction("Changes shown below (CSV)", self._export_changes)
+        export_menu.addAction("Every file in this scan (CSV)", self._export_log)
+        self.export_btn.setMenu(export_menu)
 
         self.tiles = {}
-        tile_row = hbox(spacing=12)
+        tile_row = hbox(spacing=10)
         for key in ("added", "removed", "modified", "moved"):
             t = StatTile(KIND[key][0], clickable=True)
             t.clicked.connect(lambda k=key: self.changes.set_status(k, KIND[k][0]))
@@ -194,54 +269,62 @@ class SnapshotPage(QWidget):
         self.trend_mode.setValue("files")
         self.trend_mode.changed.connect(lambda _: self._draw_trend())
         self.trend = charts.TrendChart()
-        trend_panel = Panel(margins=(18, 14, 18, 12))
-        trend_panel.lay.addLayout(hbox(label("This folder over time", "SectionTitle"), None, self.trend_mode))
-        trend_panel.lay.addSpacing(4)
-        trend_panel.lay.addWidget(self.trend)
+        self.trend.setMinimumHeight(86)
+        self.trend_panel = Panel(margins=(16, 10, 16, 8))
+        self.trend_panel.lay.addLayout(hbox(label("This folder over time", "SectionTitle"), None, self.trend_mode))
+        self.trend_panel.lay.addWidget(self.trend)
+        self.trend_panel.hide()
 
         self.changes = ResultTable(ChangeModel(), path_cols=(1,), stretch_col=1, sort=(0, Qt.AscendingOrder),
-                                   placeholder="Filter changes…", min_height=300)
+                                   placeholder="Filter changes…", min_height=220)
         self.changes.activated.connect(self._reveal_change)
         self.preview = PreviewPanel()
         self.changes_split, self.preview_btn = attach_preview(self.changes, self.preview)
         self.changes.selection_changed.connect(self._change_selected)
         self.note = label("", "Muted", wrap=True)
 
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        title_box.addWidget(self.d_title)
+        title_box.addWidget(self.d_path)
+        title_box.addWidget(self.d_stats)
         details = QWidget()
-        details.setObjectName("Workspace")
-        details.setAttribute(Qt.WA_StyledBackground, True)
         dl = QVBoxLayout(details)
-        dl.setContentsMargins(0, 8, 6, 0)
+        dl.setContentsMargins(0, 0, 0, 0)
         dl.setSpacing(12)
-        dl.addLayout(hbox(self.d_title, None, self.delete_btn, self.reveal_btn, self.log_btn, self.again_btn))
-        dl.addWidget(self.d_sub)
-        dl.addLayout(hbox(label("Compare with", "FieldLabel"), self.baseline, None, self.preview_btn, self.report_btn,
-                          self.changes_btn, spacing=10))
+        dl.addLayout(hbox(title_box, None, self.delete_btn, self.reveal_btn, self.again_btn, spacing=8))
+        dl.itemAt(0).layout().setStretch(0, 1)
+        self.preview_btn.setText("")      # icon only: the toolbar has to fit a narrow window
+        self.preview_btn.setFixedWidth(42)
+        toolbar = hbox(label("Compare with", "FieldLabel"), self.baseline, self.history_btn, self.preview_btn,
+                       self.report_btn, self.export_btn, spacing=8)
+        toolbar.setStretch(1, 1)
+        dl.addLayout(toolbar)
         dl.addLayout(tile_row)
         dl.addWidget(self.note)
-        dl.addWidget(trend_panel)
-        dl.addWidget(self.changes_split)
-        scroll = QScrollArea()
-        scroll.setObjectName("Scroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }")
-        scroll.setWidget(details)
+        dl.addWidget(self.trend_panel)
+        dl.addWidget(self.changes_split, 1)
 
-        split = QSplitter(Qt.Vertical)
-        split.setHandleWidth(8)
-        split.setChildrenCollapsible(False)
-        split.addWidget(self.table)
-        split.addWidget(scroll)
-        split.setSizes([210, 520])
         self.stack = QStackedWidget()
-        self.stack.addWidget(EmptyState(
+        self.empty = EmptyState(
             "No scans yet",
             "Scan a folder to log every file in it and its sub-folders. Scan it again any time to see what changed.",
-            "camera"))
-        self.stack.addWidget(split)
+            "camera")
+        self.stack.addWidget(self.empty)
+        self.stack.addWidget(details)
+        self.path.changed.connect(self._sync_empty)
+        self._sync_empty()
 
+        split = QSplitter(Qt.Horizontal)
+        split.setHandleWidth(10)
+        split.setChildrenCollapsible(False)
+        split.addWidget(side)
+        split.addWidget(self.stack)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setSizes([320, 840])
+
+        self.banner = Banner()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 24, 28, 24)
         lay.setSpacing(14)
@@ -250,26 +333,32 @@ class SnapshotPage(QWidget):
         heading.addWidget(label("Snapshots", "H1"))
         heading.addWidget(label("Log a folder and everything below it — then scan again to see what changed.", "Muted"))
         lay.addLayout(heading)
-        lay.addWidget(controls)
-        lay.addWidget(self.progress)
-        lay.addWidget(self.status)
         lay.addWidget(self.banner)
-        lay.addWidget(self.stack, 1)
-        self.progress.hide()
-        self.status.hide()
+        lay.addWidget(split, 1)
         self.refresh()
+
+    def _sync_empty(self, *_):
+        """The empty-state button first asks for a folder, then starts the scan."""
+        ready = bool(self.path.text()) and os.path.isdir(self.path.text())
+        self.scan_btn.setEnabled(ready and not self.is_running())
+        self.scan_btn.setToolTip("" if ready else "Choose a folder first")
+        if ready:
+            self.empty.set_action("Scan this folder", self.start, "scan")
+        else:
+            self.empty.set_action("Choose a folder…", self.path.browse, "folder")
 
     # ---- state ----------------------------------------------------------------
 
     def state(self):
         return {"path": self.path.text(), "hashed": self.hashed.isChecked(), "skip_hidden": self.skip_hidden.isChecked(),
-                "preview": self.preview_btn.isChecked()}
+                "preview": self.preview_btn.isChecked(), "history_chart": self.history_btn.isChecked()}
 
     def restore(self, s):
         self.path.setText(s.get("path", ""))
         self.hashed.setChecked(s.get("hashed", False))
         self.skip_hidden.setChecked(s.get("skip_hidden", True))
         self.preview_btn.setChecked(s.get("preview", False))
+        self.history_btn.setChecked(s.get("history_chart", False))
 
     def stop_background_work(self):
         for w in (self.worker, self.diff_worker):
@@ -279,42 +368,93 @@ class SnapshotPage(QWidget):
     def is_running(self):
         return self.worker is not None and self.worker.isRunning()
 
-    # ---- list ------------------------------------------------------------------
+    # ---- history list -----------------------------------------------------------
 
     def refresh(self, select_id=None):
-        metas = self.snaps.list()
-        self.table.set_rows(metas)
-        self.stack.setCurrentIndex(1 if metas else 0)
+        metas = sorted(self.snaps.list(), key=lambda m: -m["time"])
         self.count_changed.emit(len(metas))
-        if metas:
-            target = select_id or (self._sel() or {}).get("id") or max(metas, key=lambda m: m["time"])["id"]
-            for i, m in enumerate(self.table.model.rows):
-                if m["id"] == target:
-                    self.table.view.selectRow(self.table.proxy.mapFromSource(self.table.model.index(i, 0)).row())
-                    break
+        keep = (self._sel() or {}).get("id")
+
+        # the "show scans of…" filter: every folder that has a scan
+        roots = []
+        for m in metas:
+            if not any(F._same_path(m["root"], r) for r in roots):
+                roots.append(m["root"])
+        current = self.folder_filter.currentData()
+        self.folder_filter.blockSignals(True)
+        self.folder_filter.clear()
+        self.folder_filter.addItem("All folders", None)
+        for r in sorted(roots, key=str.lower):
+            self.folder_filter.addItem(folder_name(r), r)
+            self.folder_filter.setItemData(self.folder_filter.count() - 1, r, Qt.ToolTipRole)
+        idx = self.folder_filter.findData(current) if current else 0
+        self.folder_filter.setCurrentIndex(max(idx, 0))
+        self.folder_filter.setVisible(len(roots) > 1)
+        self.folder_filter.blockSignals(False)
+        only = self.folder_filter.currentData()
+        shown = [m for m in metas if only is None or F._same_path(m["root"], only)]
+
+        self.list.blockSignals(True)
+        self.list.clear()
+        for m in shown:
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, m)
+            item.setSizeHint(QSize(0, ScanDelegate.ROW_H))
+            item.setToolTip(f"{m['root']}\n{when(m['time'], '%A %d %B %Y, %H:%M')}")
+            self.list.addItem(item)
+        target = select_id or keep
+        row = next((i for i, m in enumerate(shown) if m["id"] == target), 0 if shown else -1)
+        self.list.setCurrentRow(row)
+        self.list.blockSignals(False)
+        self.history_count.setText(f"{len(shown)} scan{'s' if len(shown) != 1 else ''}" if shown else "")
+        self.history_hint.setVisible(not shown)
+        self.stack.setCurrentIndex(1 if metas else 0)
+        self._selected_changed()
+
+    def _user_selected(self, *_):
+        self.banner.hide()   # a message about the last scan is stale once you look at another one
         self._selected_changed()
 
     def _sel(self):
-        return self.table.selected()
+        item = self.list.currentItem()
+        return item.data(Qt.UserRole) if item is not None else None
+
+    def _list_menu(self, pos):
+        item = self.list.itemAt(pos)
+        if item is None:
+            return
+        self.list.setCurrentItem(item)
+        menu = QMenu(self)
+        menu.addAction("Scan again", self._scan_again)
+        menu.addAction("Open folder", lambda: reveal(self._sel()["root"]))
+        menu.addSeparator()
+        menu.addAction("Delete this scan", self._delete)
+        menu.exec(self.list.viewport().mapToGlobal(pos))
 
     def _selected_changed(self):
         m = self._sel()
-        for b in (self.again_btn, self.reveal_btn, self.log_btn, self.changes_btn, self.delete_btn, self.report_btn):
+        for b in (self.again_btn, self.reveal_btn, self.delete_btn, self.report_btn, self.export_btn):
             b.setEnabled(m is not None)
         if not m:
             return
-        self.d_title.setText(os.path.basename(m["root"].rstrip("/\\")) or m["root"])
+        self.d_title.setText(folder_name(m["root"]))
         self.reveal_btn.setEnabled(os.path.isdir(m["root"]))
-        self.again_btn.setEnabled(os.path.isdir(m["root"]))
-        self.d_sub.setText(f"{m['root']}  ·  scanned {when(m['time'], '%A %d %B %Y, %H:%M')}  ·  "
-                           f"{fmt_int(m['files'])} files in {fmt_int(m['dirs'])} folders, {fmt_size(m['bytes'])}"
-                           + (f"  ·  {fmt_int(m['errors'])} unreadable folders skipped" if m.get("errors") else ""))
+        self.again_btn.setEnabled(os.path.isdir(m["root"]) and not self.is_running())
+        self.d_path.setText(m["root"])
+        self.d_path.setToolTip(m["root"])
+        stats = (f"{when(m['time'])}  ·  {fmt_int(m['files'])} files  ·  {fmt_size(m['bytes'])}"
+                 + (f"  ·  {fmt_int(m['errors'])} unreadable skipped" if m.get("errors") else ""))
+        self.d_stats.setText(stats)
+        self.d_stats.setToolTip(f"Scanned {when(m['time'], '%A %d %B %Y, %H:%M')}\n{fmt_int(m['files'])} files in "
+                                f"{fmt_int(m['dirs'])} folders, {fmt_size(m['bytes'])}")
         same = sorted((x for x in self.snaps.list() if F._same_path(x["root"], m["root"]) and x["time"] < m["time"]),
                       key=lambda x: -x["time"])
         self.baseline.blockSignals(True)
         self.baseline.clear()
         for i, x in enumerate(same):
-            self.baseline.addItem(("Previous scan · " if i == 0 else "") + when(x["time"]), x["id"])
+            self.baseline.addItem(("Previous scan · " if i == 0 else "") + when_short(x["time"]), x["id"])
+        if not same:
+            self.baseline.addItem("— first scan of this folder —")
         self.baseline.setEnabled(bool(same))
         self.baseline.blockSignals(False)
         self._draw_trend()
@@ -326,6 +466,10 @@ class SnapshotPage(QWidget):
             return
         key = self.trend_mode.value()
         same = sorted((x for x in self.snaps.list() if F._same_path(x["root"], m["root"])), key=lambda x: x["time"])
+        self.history_btn.setEnabled(len(same) >= 2)
+        self.history_btn.setToolTip("Chart this folder's file count and size over time" if len(same) >= 2
+                                    else "Scan this folder at least twice to see its history")
+        self.trend_panel.setVisible(self.history_btn.isChecked() and len(same) >= 2)
         self.trend.set_data([(when(x["time"], "%d %b %H:%M"), x[key]) for x in same],
                             fmt_int if key == "files" else fmt_size)
 
@@ -412,7 +556,7 @@ class SnapshotPage(QWidget):
         self.status.setVisible(busy)
         self.cancel_btn.setVisible(busy)
         self.scan_btn.setEnabled(not busy)
-        self.again_btn.setEnabled(not busy and self._sel() is not None)
+        self.again_btn.setEnabled(not busy and self._sel() is not None and os.path.isdir(self._sel()["root"]))
         if busy:
             self.status.setText("Starting…")
 

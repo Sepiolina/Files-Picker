@@ -69,6 +69,42 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(open(path, "rb").read(5), b"%PDF-")
 
 
+class PdfHeadingTests(unittest.TestCase):
+    """
+    Regression: the app sets its font in PIXELS. <h1>/<h2> inherit that, so their text was sized in pixels - fine on
+    screen, but the PDF device has 1200 dpi, where a 26 px heading is about 1.6 pt: the title and section headings of
+    every PDF report printed as dashes. Headings must be sized in points.
+    """
+
+    def test_headings_are_point_sized_even_with_a_pixel_sized_app_font(self):
+        try:
+            from PySide6.QtGui import QFont
+            from PySide6.QtWidgets import QApplication
+        except ImportError:
+            self.skipTest("PySide6 not installed")
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+        old_font = app.font()
+        try:
+            font = QFont()
+            font.setPixelSize(13)            # what theme.apply() does
+            app.setFont(font)
+            rep = R.Report("A report title", "sub")
+            rep.heading("Overview")
+            doc = R.pdf_document(rep)
+            sizes = {}
+            block = doc.firstBlock()
+            while block.isValid():
+                fragment = block.begin().fragment()
+                if fragment.isValid():
+                    sizes[block.text()] = fragment.charFormat().font().pointSizeF()
+                block = block.next()
+            self.assertGreaterEqual(sizes["A report title"], 18, "title is not point-sized (it would print as a dash)")
+            self.assertGreaterEqual(sizes["Overview"], 12, "section heading is not point-sized")
+        finally:
+            app.setFont(old_font)
+
+
 class NoteTests(unittest.TestCase):
     def test_scan_note(self):
         self.assertEqual(scan_note(), "")

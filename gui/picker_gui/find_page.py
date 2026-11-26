@@ -142,6 +142,7 @@ class FindPage(QWidget):
             self.type.addItem(text, value)
         self.type.activated.connect(lambda _: self.search())
         self.result_chip = Chip("")
+        self.result_chip.hide()   # only shown once there is something to report
         self.banner = Banner()
 
         # ---- results ---------------------------------------------------------------------
@@ -168,10 +169,13 @@ class FindPage(QWidget):
         rl.addLayout(hbox(label("Double-click a result to open it", "Hint"), None, self.preview_btn, self.copy_btn,
                           self.show_btn, self.open_btn))
         self.stack = QStackedWidget()
-        self.stack.addWidget(EmptyState(
+        self.empty = EmptyState(
             "Find a file anywhere",
             "Choose a folder or a whole drive. The first scan builds a cached index — after that, searches are instant "
-            "and refreshing only re-reads what changed.", "search"))
+            "and refreshing only re-reads what changed.", "search")
+        self.stack.addWidget(self.empty)
+        self.path.changed.connect(self._sync_empty)
+        self._sync_empty()
         self.stack.addWidget(results)
 
         lay = QVBoxLayout(self)
@@ -194,6 +198,18 @@ class FindPage(QWidget):
         self._save_q = QTimer(self, singleShot=True, interval=1500)
         self._save_q.timeout.connect(self._persist_queries)
         self._sync_buttons()
+
+    def _set_result(self, text, tone=None):
+        self.result_chip.setVisible(bool(text))
+        if text:
+            self.result_chip.set(text, tone)
+
+    def _sync_empty(self, *_):
+        """The empty-state button first asks for a folder or drive, then builds the index."""
+        if self.path.text() and os.path.isdir(self.path.text()):
+            self.empty.set_action("Index this folder", lambda: self.build(False), "refresh")
+        else:
+            self.empty.set_action("Choose a folder or drive…", self.path.browse, "folder")
 
     # ---- state -------------------------------------------------------------------------
 
@@ -248,7 +264,7 @@ class FindPage(QWidget):
             self.index = None
             self.qcache = {}
             self.table.set_rows([])
-            self.result_chip.set("")
+            self._set_result("")
             self.index_chip.set("Not indexed yet")
         self._sync_buttons()
 
@@ -312,7 +328,7 @@ class FindPage(QWidget):
         query = self.box.text().strip()
         if not query:
             self.table.set_rows([])
-            self.result_chip.set("")
+            self._set_result("")
             return
         if self.index is None:
             if not self.is_running():
@@ -334,7 +350,7 @@ class FindPage(QWidget):
             cached = False
         ms = (time.perf_counter() - t0) * 1000
         self.table.set_rows(rows)
-        self.result_chip.set(f"{fmt_int(len(rows))}{'+' if len(rows) >= MAX_RESULTS else ''} results · {ms:.0f} ms"
+        self._set_result(f"{fmt_int(len(rows))}{'+' if len(rows) >= MAX_RESULTS else ''} results · {ms:.0f} ms"
                              + (" · from cache" if cached else ""), "success" if cached else None)
         if rows:
             self.table.view.selectRow(0)

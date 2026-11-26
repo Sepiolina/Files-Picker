@@ -193,10 +193,13 @@ class DuplicatesPage(QWidget):
         scroll.setWidget(content)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(EmptyState(
+        self.empty = EmptyState(
             "Find duplicate files",
             "Pick a folder and File Picker finds files with identical content — even when the names differ — "
-            "and shows how much space the extra copies take.", "layers"))
+            "and shows how much space the extra copies take.", "layers")
+        self.stack.addWidget(self.empty)
+        self.path.changed.connect(self._sync_empty)
+        self._sync_empty()
         self.stack.addWidget(scroll)
 
         lay = QVBoxLayout(self)
@@ -214,6 +217,16 @@ class DuplicatesPage(QWidget):
         lay.addWidget(self.stack, 1)
         self.progress.hide()
         self.status.hide()
+
+    def _sync_empty(self, *_):
+        """The empty-state button first asks for a folder, then starts the scan."""
+        ready = bool(self.path.text()) and os.path.isdir(self.path.text())
+        self.find_btn.setEnabled(ready and not self.is_running())
+        self.find_btn.setToolTip("" if ready else "Choose a folder first")
+        if ready:
+            self.empty.set_action("Find duplicates", self.start, "layers")
+        else:
+            self.empty.set_action("Choose a folder…", self.path.browse, "folder")
 
     # ---- state ------------------------------------------------------------------------------
 

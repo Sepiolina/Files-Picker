@@ -172,10 +172,13 @@ class SpacePage(QWidget):
         rl.addWidget(main, 1)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(EmptyState(
+        self.empty = EmptyState(
             "See what is using your space",
             "Measure a folder or a whole drive. Every folder and large file becomes a tile sized by how much "
-            "space it takes — click to dig in.", "grid"))
+            "space it takes — click to dig in.", "grid")
+        self.stack.addWidget(self.empty)
+        self.path.changed.connect(self._sync_empty)
+        self._sync_empty()
         self.stack.addWidget(results)
 
         lay = QVBoxLayout(self)
@@ -193,6 +196,16 @@ class SpacePage(QWidget):
         lay.addWidget(self.stack, 1)
         self.progress.hide()
         self.status.hide()
+
+    def _sync_empty(self, *_):
+        """The empty-state button first asks for a folder, then starts the scan."""
+        ready = bool(self.path.text()) and os.path.isdir(self.path.text())
+        self.scan_btn.setEnabled(ready and not self.is_running())
+        self.scan_btn.setToolTip("" if ready else "Choose a folder first")
+        if ready:
+            self.empty.set_action("Measure this folder", self.start, "grid")
+        else:
+            self.empty.set_action("Choose a folder…", self.path.browse, "folder")
 
     # ---- state ------------------------------------------------------------------------------
 

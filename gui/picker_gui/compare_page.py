@@ -216,10 +216,14 @@ class ComparePage(QWidget):
         scroll.setWidget(content)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(EmptyState(
+        self.empty = EmptyState(
             "Compare two folders",
             "Pick any two folders — on the same drive or different ones — and see what is identical, "
-            "different, moved or missing.", "compare"))
+            "different, moved or missing.", "compare")
+        self.stack.addWidget(self.empty)
+        self.path_a.changed.connect(self._sync_empty)
+        self.path_b.changed.connect(self._sync_empty)
+        self._sync_empty()
         self.stack.addWidget(scroll)
 
         lay = QVBoxLayout(self)
@@ -237,6 +241,19 @@ class ComparePage(QWidget):
         lay.addWidget(self.stack, 1)
         self.progress.hide()
         self.status.hide()
+
+    def _sync_empty(self, *_):
+        """The empty-state button walks you through: folder A, folder B, then Compare."""
+        ok = lambda p: bool(p) and os.path.isdir(p)
+        ready = ok(self.path_a.text()) and ok(self.path_b.text())
+        self.compare_btn.setEnabled(ready and not self.is_running())
+        self.compare_btn.setToolTip("" if ready else "Choose both folders first")
+        if not ok(self.path_a.text()):
+            self.empty.set_action("Choose folder A…", self.path_a.browse, "folder")
+        elif not ok(self.path_b.text()):
+            self.empty.set_action("Choose folder B…", self.path_b.browse, "folder")
+        else:
+            self.empty.set_action("Compare the folders", self.start, "compare")
 
     # ---- state ----------------------------------------------------------------
 

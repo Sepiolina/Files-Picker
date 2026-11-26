@@ -226,13 +226,18 @@ def to_html(report):
 #  PDF (Qt)                                                                     #
 # --------------------------------------------------------------------------- #
 
-def to_pdf(report, path):
-    """Write the report as a PDF. Charts are rendered from the SVG at 2x for sharp output."""
-    from PySide6.QtCore import QByteArray, QMarginsF, QUrl
-    from PySide6.QtGui import QColor, QImage, QPageLayout, QPageSize, QPainter, QPdfWriter, QTextDocument
+def pdf_document(report):
+    """The report as a QTextDocument (charts rasterised from the SVG at 2x for sharp output)."""
+    from PySide6.QtCore import QByteArray, QUrl
+    from PySide6.QtGui import (QColor, QFont, QGuiApplication, QImage, QPainter, QTextDocument)
     from PySide6.QtSvg import QSvgRenderer
 
     doc = QTextDocument()
+    # The app sets its font in pixels; <h1>/<h2> are sized relative to a POINT-based default font, so with the
+    # app font they collapse to a few pixels. Give the document an explicit point-sized default.
+    base = QFont(QGuiApplication.font())
+    base.setPointSizeF(10)
+    doc.setDefaultFont(base)
     parts = [f'<h1 style="font-size:22pt">{esc(report.title)}</h1>']
     if report.subtitle:
         parts.append(f'<p style="color:{MUTED}">{esc(report.subtitle)}</p>')
@@ -277,6 +282,15 @@ def to_pdf(report, path):
     doc.setDefaultStyleSheet(f"body{{font-family:'{FONT.split(',')[0]}';color:{INK};font-size:10pt}} "
                              f"td{{border-bottom:1px solid {LINE}}}")
     doc.setHtml(f"<body>{''.join(parts)}</body>")
+    return doc
+
+
+def to_pdf(report, path):
+    """Write the report as a PDF."""
+    from PySide6.QtCore import QMarginsF
+    from PySide6.QtGui import QPageLayout, QPageSize, QPdfWriter
+
+    doc = pdf_document(report)
     writer = QPdfWriter(path)
     writer.setPageSize(QPageSize(QPageSize.A4))
     writer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout.Millimeter)

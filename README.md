@@ -2,660 +2,324 @@
 
 [![Build](https://github.com/Sepiolina/Files-Picker/actions/workflows/build.yml/badge.svg)](https://github.com/Sepiolina/Files-Picker/actions/workflows/build.yml)
 
-**File Picker** is a desktop application for finding and exporting files from large directory structures.
+**File Picker** is a desktop toolbox for working with big folders. Paste a list of file names and it finds and exports those files, keeping their folder structure. Then use its other tabs to compare folders, see what changed since last time, find duplicate files, see what uses your disk, and search a whole drive.
 
-Provide a list of filenames by pasting them directly or importing a `.txt` or `.csv` file. File Picker searches the selected directory and its subfolders, identifies matching files, and exports them while preserving their original folder structure.
+It runs on **Windows, macOS and Linux**, works with local folders and whole drives, and never reads file contents unless a feature needs it (checksums, previews).
 
-Supported output formats include **ZIP, TAR, TAR.GZ, and regular folders**.
+![Preview of the files a list of names matches, before anything is copied](docs/screenshots/02-run-preview.png)
 
-## Features
+## Contents
 
-- **Fast file searching:** Search large directory structures without reading file contents.
-- **Flexible matching:** Choose between exact, partial, prefix, suffix, and whole-part matching.
-- **Multiple input methods:** Paste filenames or import lists from TXT and CSV files.
-- **Organized exports:** Preserve the original directory structure or group results by search name.
-- **Multiple export formats:** Export to ZIP, TAR, TAR.GZ, or a regular folder.
-- **Preview before exporting:** Review matches and identify missing filenames without copying files.
-- **Progress tracking:** Monitor operations and cancel them when needed.
-- **Export history:** Review previous exports, restore settings, and rerun operations.
-- **Compare folders:** Compare any two folders (same or different drives) with charts and a filterable table of identical, different, moved and one-sided files.
-- **Snapshots:** Log a folder and everything below it, then scan again to see what was added, removed, modified or moved.
-- **Duplicates:** Find files with identical content, see the space they waste, and move the extra copies to the Trash.
-- **Space:** A clickable treemap showing which folders and files use your disk.
-- **Find:** Search a folder or whole drive with a typo-tolerant "smart" search backed by a persistent cache.
-- **Previews, ignore rules and reports:** Preview pictures and text, skip folders with `.gitignore`-style rules, skip online-only cloud files, and save HTML or PDF reports.
-- **Cross-platform support:** Available for Windows, macOS, and Linux.
-- **Command-line support:** Run searches and exports without opening the graphical interface.
+- [What's inside](#whats-inside)
+- [Download](#download)
+- [Run from source](#run-from-source)
+- [A tour of the tabs](#a-tour-of-the-tabs)
+  - [Run: find files by name and export them](#run-find-files-by-name-and-export-them)
+  - [Compare](#compare)
+  - [Snapshots](#snapshots)
+  - [Duplicates](#duplicates)
+  - [Space](#space)
+  - [Find](#find)
+  - [History](#history)
+- [Options shared by every tab](#options-shared-by-every-tab)
+- [Settings, data and the interface](#settings-data-and-the-interface)
+- [Command-line interface](#command-line-interface)
+- [How it works](#how-it-works)
+- [Development](#development)
 
-## Screenshots
+## What's inside
 
-<table>
-  <tr>
-    <td width="50%">
-      <a href="docs/screenshots/7-compare.png"><img src="docs/screenshots/7-compare.png" alt="Compare tab: two folders, overview chart and differences by file type"></a><br>
-      <sub><b>Compare</b> — two folders side by side: what is identical, different, moved or missing.</sub>
-    </td>
-    <td width="50%">
-      <a href="docs/screenshots/8-snapshots.png"><img src="docs/screenshots/8-snapshots.png" alt="Snapshots tab: scan history and changes since the previous scan"></a><br>
-      <sub><b>Snapshots</b> — log a folder, scan again later, see exactly what changed.</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <a href="docs/screenshots/9-duplicates.png"><img src="docs/screenshots/9-duplicates.png" alt="Duplicates tab: groups of identical files with wasted space"></a><br>
-      <sub><b>Duplicates</b> — identical files grouped, wasted space shown, extras moved to the Trash.</sub>
-    </td>
-    <td width="50%">
-      <a href="docs/screenshots/10-space.png"><img src="docs/screenshots/10-space.png" alt="Space tab: treemap of folder sizes"></a><br>
-      <sub><b>Space</b> — a treemap of what uses your disk; click a folder to look inside.</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <a href="docs/screenshots/11-find.png"><img src="docs/screenshots/11-find.png" alt="Find tab: smart search results with a preview panel"></a><br>
-      <sub><b>Find</b> — describe the file; typos and synonyms are fine. Results come from a cached index, with a preview.</sub>
-    </td>
-    <td width="50%">
-      <a href="docs/screenshots/12-dark-space.png"><img src="docs/screenshots/12-dark-space.png" alt="Space tab in the dark theme"></a><br>
-      <sub><b>Dark theme</b> — every tab follows the light or dark appearance.</sub>
-    </td>
-  </tr>
-</table>
+| Tab | Shortcut | Use it to… |
+|---|---|---|
+| **Run** | `Ctrl+1` | Find every file whose name contains one of your names (pasted or imported from TXT/CSV) and export them to ZIP, TAR, TAR.GZ or a folder. |
+| **Compare** | `Ctrl+2` | See how two folders differ: identical, different, moved, or only on one side. |
+| **Snapshots** | `Ctrl+3` | Log a folder, scan it again later, and see exactly what was added, removed, modified or moved. |
+| **Duplicates** | `Ctrl+4` | Find files with identical content, see the space they waste, and move the extras to the Trash. |
+| **Space** | `Ctrl+5` | See what is using your disk as a map you can click through. |
+| **Find** | `Ctrl+6` | Search a folder or drive by describing the file. Typos and synonyms are fine. |
+| **History** | `Ctrl+7` | Review every export, reload its settings or run it again. |
 
-The original **Run** workflow (find files by a list of names and export them) is shown under [Getting Started](#getting-started) and [Using File Picker](#using-file-picker).
+Also included: previews of pictures and text, `.gitignore`-style ignore rules, skipping of online-only cloud files (OneDrive, iCloud), HTML and PDF reports, light and dark themes, and a command-line mode.
 
 ## Download
 
-Prebuilt programs are attached to each release on this repository's **Releases** page, and every push to `main` produces the same files as downloadable _artifacts_ of the **Build** workflow run.
+Prebuilt programs are attached to each release on the repository's [Releases page](https://github.com/Sepiolina/Files-Picker/releases). Every push to `main` also produces the same files as downloadable *artifacts* of the [Build workflow](https://github.com/Sepiolina/Files-Picker/actions/workflows/build.yml).
 
-| Platform                 | File                          | How to start it                                                                                                                                          |
-| ------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows 10 / 11 (x64)    | `FilePicker-windows-x64.exe`  | Double-click. See [Windows security warnings](#windows-security-warnings) if SmartScreen appears.                                                        |
-| macOS (Apple silicon)    | `FilePicker-macos-arm64.zip`  | Unzip, then right-click `FilePicker.app` → **Open** the first time (the app is not code-signed). Or run `xattr -dr com.apple.quarantine FilePicker.app`. |
-| Linux (x64)              | `FilePicker-linux-x64.tar.gz` | `tar -xzf FilePicker-linux-x64.tar.gz && ./FilePicker`. On a minimal install you may need `sudo apt install libxcb-cursor0`.                             |
-| Command-line engine only | `picker-engine-<os>-<arch>`   | The Go engine without the interface (see [Command-Line Interface](#command-line-interface)).                                                             |
+| Platform | File | How to start it |
+|---|---|---|
+| Windows 10 / 11 (x64) | `FilePicker-windows-x64.exe` | Double-click. See [Windows security warnings](#windows-security-warnings) if SmartScreen appears. |
+| macOS (Apple silicon) | `FilePicker-macos-arm64.zip` | Unzip, then right-click `FilePicker.app` → **Open** the first time (the app is not code-signed). Or run `xattr -dr com.apple.quarantine FilePicker.app`. |
+| Linux (x64) | `FilePicker-linux-x64.tar.gz` | `tar -xzf FilePicker-linux-x64.tar.gz && ./FilePicker`. On a minimal install you may need `sudo apt install libxcb-cursor0`. |
+| Command-line engine only | `picker-engine-<os>-<arch>` | The Go engine without the interface (see [Command-line interface](#command-line-interface)). |
 
-Each release also includes `SHA256SUMS.txt` so downloads can be verified. Intel Macs can run from source (below) or get a build by adding an Intel macOS runner to the matrix in `.github/workflows/build.yml`.
+Each release also includes `SHA256SUMS.txt` so downloads can be verified. Intel Macs can run from source or get a build by adding an Intel macOS runner to the matrix in `.github/workflows/build.yml`.
 
-## Project Structure
+## Run from source
 
-File Picker separates the search engine from the graphical interface. This allows the core functionality to operate independently while keeping the desktop application responsive.
-
-```text
-file_picker/
-├── engine/       Go engine: search, export, and the fast tree / hash scanners
-├── gui/          Python and Qt desktop interface (and its tests in gui/tests)
-├── docs/         Protocol documentation and screenshots
-├── .github/      GitHub Actions workflows (tests, packaging, releases)
-├── build.sh      Engine build script for macOS and Linux
-├── build.ps1     Engine build script for Windows
-├── build.cmd     Windows build launcher
-├── package.sh    Standalone app packaging for macOS and Linux
-├── package.ps1   Standalone app packaging for Windows
-└── package.cmd   Windows packaging launcher
-```
-
-### Architecture
-
-**Go search engine**
-
-The Go engine handles directory scanning, filename matching, and file exports.
-
-Go was selected for its performance, concurrency support, and ability to compile into standalone executables for Windows, macOS, and Linux.
-
-It also offers a practical balance between execution speed, code readability, and maintainability. For this type of application, filesystem performance is often a more significant limitation than the choice between compiled languages.
-
-**Python and Qt interface**
-
-The desktop interface is built using Python and Qt.
-
-Qt provides cross-platform support, native file selection dialogs, and efficient handling of large tables. It also allows the application to maintain a consistent interface across supported operating systems.
-
-**Independent processes**
-
-The engine runs as a separate process from the interface.
-
-This design helps keep the interface responsive during long-running searches and exports. It also makes the engine suitable for scripts, scheduled tasks, and automated workflows.
-
-Because the two components communicate through a defined protocol, either can be updated or replaced independently.
-
-The communication format is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
-
-## Getting Started
-
-### Requirements
-
-For development and running the application from source, install:
-
-- [Go](https://go.dev/dl/) — version 1.22 or later
-- [Python](https://www.python.org/downloads/) — version 3.10 or later
-
-### 1. Build the search engine
-
-On macOS or Linux:
+You need [Go](https://go.dev/dl/) 1.22 or later and [Python](https://www.python.org/downloads/) 3.10 or later.
 
 ```bash
-./build.sh
+git clone https://github.com/Sepiolina/Files-Picker.git
+cd Files-Picker
+
+./build.sh                          # macOS / Linux: build the search engine   (Windows: build.cmd)
+pip install -r gui/requirements.txt # the interface
+python gui/run_gui.py               # start File Picker
 ```
 
-On Windows:
+`build.cmd` can be double-clicked in File Explorer; it runs `build.ps1` without changing your PowerShell execution policy. The build scripts report common problems such as a missing or too-old Go.
 
-```cmd
-build.cmd
-```
+The engine is optional for the analysis tabs (Compare, Snapshots, Duplicates, Space, Find): without it they use a built-in Python scanner with identical results, just slower on very large folders. The Run tab always needs the engine.
 
-You can run `build.cmd` from a terminal or double-click it in File Explorer.
+## A tour of the tabs
 
-On Windows, this launcher executes `build.ps1` without requiring changes to your PowerShell execution policy.
+### Run: find files by name and export them
 
-The build script also reports common setup problems, including missing Go installations, unsupported Go versions, and compilation errors.
+Four steps, with a checkmark on each completed step:
 
-### 2. Install the GUI dependencies
+![The Run tab before anything is entered](docs/screenshots/01-run-getting-started.png)
+
+**1. Search in.** Browse for a folder or drop one on the field. Sub-folders are included by default.
+
+**2. Names to find.** Paste names, import a `.txt` or `.csv` file, or drop a file on the box. For CSV files choose whether there is a header row and which column holds the names. The header shows how many names, unique names and duplicates you have; hover for details.
+
+**3. Matching.** The defaults suit most searches; **Customize** opens the rest.
+
+| Setting | Description |
+|---|---|
+| Match mode | Whole part (default), Anywhere, Exact name, Starts with, or Ends with |
+| Compare with | Filename without extension, filename with extension, or relative file path |
+| Case sensitivity | Case-insensitive by default |
+| Duplicates | Merge duplicate entries (keeping the first or last spelling) or stop and report them |
+| Multiple matches | When a file matches several names: longest, shortest, first in the list, or all |
+| File types | Limit results to extensions such as `pdf, jpg`, or leave empty for all |
+
+With the default **Whole part** mode, `abc` matches `gg_abc_.txt` and `dq122130219_abc_1291291.txt`, but not `gg_abcde_.txt`. That suits file names with identifiers separated by underscores or dashes. The *multiple matches* setting only matters for exports using **One folder per name**.
+
+**4. Output.** ZIP, Folder (copy), TAR or TAR.GZ. Optional: **One folder per name** and a **CSV report**. The action bar always says what will happen, for example `10 names → client-files.zip`.
+
+Then **Preview** (see what matches, copy nothing) or **Export** (`Ctrl+Enter`). The result cards show matching files, names not found, total size and files checked; the **Names** tab lists every name and what it matched, and **Only not found** narrows it to the misses.
+
+![A finished export, with Show in folder and Open report](docs/screenshots/03-run-exported.png)
+
+![Names that matched nothing, in the dark theme](docs/screenshots/04-run-dark-not-found.png)
+
+### Compare
+
+Pick any two folders (same drive or different drives) and see how they differ.
+
+![Compare: the overview chart and where the differences are](docs/screenshots/06-compare.png)
+
+- **Compare by:** *Size* (fastest), *Size + date* (2-second tolerance for FAT drives) or *Content* (files with equal sizes are compared by checksum).
+- **Ignore sub-folders** pairs files by name only, for folders that are organised differently.
+- A file with the same name and size in a *different sub-folder* counts as **Moved**.
+- Click a count tile to filter the table; the chart groups differences by file type, top folder or size.
+- **Preview** shows the selected file from A and B side by side. **Export CSV** and **Report** save the result.
+
+### Snapshots
+
+Scan a folder and everything below it, keep the result as a log, scan again later, and see what changed.
+
+![Snapshots: scan history on the left, what changed on the right](docs/screenshots/07-snapshots.png)
+
+The screen has two panes:
+
+- **Left: New scan and Scan history.** Choose a folder and press **Scan folder**. Each past scan is a card showing its date, folder, size and what changed since the scan before it (`+3 −2 ~1`). When you have scanned more than one folder, a filter lists them. Right-click a scan for *Scan again*, *Open folder* and *Delete*.
+- **Right: the selected scan.** **Scan again** repeats the scan and compares it with the previous one. **Compare with** can use any older scan of the same folder. The tiles count added, removed, modified, moved and unchanged files; click one to filter the list below it. In the toolbar, the clock button toggles a **history chart** of the folder's file count or size over time, the eye button toggles a **preview** of the selected file, **Report** saves a shareable report, and **Export** saves CSV (the changes shown, or every file in the scan).
+
+**Exact mode (read file contents)** computes a checksum for every file, so edits and renames are detected exactly. It is slower the first time; unchanged files are not read again on later scans. Without it, changes are detected by size and modified time. Scans are stored compressed, one file per scan.
+
+### Duplicates
+
+Finds files with identical content, even when the names differ.
+
+![Duplicates: wasted space, groups of identical files, and what will be removed](docs/screenshots/08-duplicates.png)
+
+Files are compared cheaply first, so most are never read in full: same size, then same first 64 KB, then same checksum of the whole file. You then choose what to keep:
+
+- **Keep newest**, **Keep oldest** or **Keep shortest path** tick all the other copies; you can also tick files by hand.
+- **Move selected to Trash** sends them to the Trash / Recycle Bin after a confirmation, so they can be restored. Every group always keeps at least one copy.
+- **Only files** sets a minimum size (for example *1 MB or more*), so small files that rarely matter for disk space are ignored.
+- The tab lists the 3,000 groups wasting the most space.
+
+### Space
+
+A map of what uses your disk. Every folder and large file is a tile whose area is its size.
+
+![Space: a treemap of folder sizes with the exact sizes beside it](docs/screenshots/09-space.png)
+
+Click a folder tile to look inside it, and use the breadcrumb or **↑ Up** to go back. Folders are slate-coloured; files are coloured by type (images, video, audio, documents, archives, code). Each folder shows its 60 largest files and groups the rest, and the list on the right gives exact sizes. A whole drive works too.
+
+![The same view in the dark theme](docs/screenshots/13-dark-space.png)
+
+### Find
+
+Search a folder or a whole drive by describing the file.
+
+![Find: smart search with a preview of the selected file](docs/screenshots/10-find.png)
+
+- **Smart** search understands word forms, synonyms (`bill` finds invoices), file-type concepts (`photos` finds `.jpg` and `.png` files) and typos (`recipt`). **Exact** does substring matching and supports `*` and `?` wildcards.
+- The first search builds an index of file and folder names, which is saved to disk. Reopening the app is instant, and **Refresh index** re-reads only the folders whose contents changed (**Full rescan** re-reads everything).
+- Every query and its result is remembered, so repeating a search is instant, even after a restart. The remembered results are discarded when the index changes.
+- It searches *names*, not file contents, and uses no machine-learning model, so nothing leaves your computer.
+- The **Drives** menu lists your drives. Double-click a result to open it, or use **Show in folder** and **Copy path**.
+
+### History
+
+Every export from the Run tab is recorded with its settings.
+
+![History: past exports with their settings](docs/screenshots/05-history.png)
+
+From a past run you can **Load settings**, **Run again**, **Show output** or **Open report**.
+
+## Options shared by every tab
+
+### Previews and reports
+
+- **Preview** (the eye button on each tab): pictures are shown scaled, and text files show their first lines. Only the start of a file is read, very large pictures are skipped, and online-only cloud files are never opened.
+- **Report** (Compare, Snapshots, Duplicates, Space): saves a self-contained `.html` file (the charts are inline SVG; nothing external) or a `.pdf`. Reports use a print-friendly light palette. HTML reports list up to 3,000 table rows, PDF reports up to 800.
+
+![A PDF report generated from the Compare tab](docs/screenshots/12-report.png)
+
+### Scan options
+
+The sliders button in the title bar (or **Scan options…** on each tab) opens the options used by Compare, Snapshots, Duplicates, Space and Find.
+
+![Scan options: ignore rules, cloud files and the engine](docs/screenshots/11-scan-options.png)
+
+- **Ignore rules** are a subset of `.gitignore` syntax, one per line and case-insensitive: `node_modules/` (folders only), `*.tmp`, `/build` (top level only), `docs/drafts` (any rule containing `/` is relative to the scanned folder), `**/cache/**`, and `# comments`. `!negation` is not supported. The defaults skip `node_modules/`, `__pycache__/`, `Thumbs.db`, `desktop.ini`, `~$*` and `*.tmp`. The Run tab has its own matching and does not use these rules.
+- **Skip online-only cloud files** (on by default) skips OneDrive "Files On-Demand" placeholders on Windows and iCloud / File Provider placeholders on macOS. They are never opened or hashed, so nothing is downloaded, and each tab says how many were skipped. Linux has no such placeholders.
+- **Use the fast Go engine** shows whether the engine was found and is new enough (2.1 or later).
+
+Changing these options makes the next scan, and the Find index, re-read folders, so cached results never disagree with your rules.
+
+## Settings, data and the interface
+
+File Picker saves your settings as you work and restores them at the next start: the folders, options and names of every tab, the ignore rules, the window size and the theme.
+
+Application data lives in the standard user data directory:
+
+| Operating system | Location |
+|---|---|
+| Windows | `%APPDATA%\FilePicker\FilePicker` |
+| macOS | `~/Library/Application Support/FilePicker/FilePicker` |
+| Linux | `~/.local/share/FilePicker/FilePicker` |
+
+Besides settings and history, that folder holds `snapshots/` (the Snapshots log) and `search_cache/` (the Find index and remembered searches); delete them to start fresh. Name lists are stored once and referenced by settings and history, so a 180,000-name list is not duplicated for every export.
+
+**Keyboard shortcuts**
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+1` … `Ctrl+7` | Open Run, Compare, Snapshots, Duplicates, Space, Find, History |
+| `Ctrl+Enter` | Start the export (Run tab) |
+| `Ctrl+P` | Preview the matches (Run tab) |
+| `Esc` | Cancel the current operation |
+
+**Window.** File Picker uses a custom title bar with the tabs, theme menu and window controls, while keeping native behaviour. On Windows 10 and 11 that includes dragging to move, double-click to maximize, Aero Snap and Windows 11 Snap Layouts, native shadows and rounded corners, and a maximized window that respects the taskbar. On macOS and Linux the window manager handles moving and resizing. If the custom title bar causes problems on a Windows system, start the app with `FILEPICKER_NATIVE_FRAME=1` to use the standard frame.
+
+## Command-line interface
+
+The engine also runs without the interface, for scripts and scheduled tasks.
 
 ```bash
-pip install -r gui/requirements.txt
+gui/bin/picker example > job.json                    # a sample job with every option and its default
+gui/bin/picker scan   --job job.json --format text   # preview the matches; copies nothing
+gui/bin/picker export --job job.json --format text   # search and export
 ```
 
-### 3. Launch File Picker
-
-```bash
-python gui/run_gui.py
-```
-
-The application will open its main window, where you can configure and run your first search.
-
-![Getting started](docs/screenshots/1-getting-started.png)
-
-![Export complete](docs/screenshots/3-exported.png)
-
-## Analysis tabs: Compare, Snapshots, Duplicates, Space and Find
-
-These tabs work on whole folders and drives. Their scanning is done by the Go engine (`picker tree` and `picker hash`) when it is built, and by an equivalent built-in Python scanner otherwise, with identical results. Build the engine (`build.sh` / `build.ps1`) to use it. The shared logic lives in `gui/picker_gui/fscore.py` and has no Qt dependency; tests are in `gui/tests` and `engine/internal`.
-
-| Tab            | Shortcut | What it does                                                                                                                                                                                                                                                                                                                                                                                 |
-| -------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Compare**    | Ctrl+2   | Compares folder A with folder B by size, size + date, or content (checksums for same-size files). _Ignore sub-folders_ pairs files by name for differently organised copies. Same name + size in a different sub-folder counts as **Moved**. Click a count to filter the table; select a row to preview both versions side by side. Export CSV or a report.                                  |
-| **Snapshots**  | Ctrl+3   | Scans a folder recursively and saves the log (one compressed file per scan, in the app data folder). **Scan again** compares with the previous scan automatically; **Compare with** lets you choose any older scan. With _Read file contents_ on, edits and renames are detected exactly, and unchanged files are not re-read on later scans. Export the full log, the changes, or a report. |
-| **Duplicates** | Ctrl+4   | Finds identical files by content: same size, then same first 64 KB, then same checksum, so most files are never read in full. Shows wasted space by type, lets you choose what to keep (newest, oldest, shortest path) and moves the rest to the Trash / Recycle Bin. Every group always keeps at least one copy.                                                                            |
-| **Space**      | Ctrl+5   | Draws a treemap where tile area = size. Click a folder to look inside, use the breadcrumb to go back; the list shows exact sizes. File colours show the type (images, video, code…).                                                                                                                                                                                                         |
-| **Find**       | Ctrl+6   | Pick a folder or a drive and describe the file. _Smart_ search understands word forms, synonyms (`bill` → invoice), file-type concepts (`photos` → `.jpg`, `.png`…) and typos. _Exact_ does substring and `*`/`?` wildcard matching.                                                                                                                                                         |
-
-**Preview** (button on each tab): pictures are shown scaled; text files show their first lines. Only the start of a file is read, very large pictures are skipped, and online-only cloud files are never opened.
-
-**Reports** (button on Compare, Snapshots, Duplicates and Space): save a self-contained `.html` file (charts are inline SVG, nothing external) or a `.pdf`. Reports use a print-friendly light palette; the PDF lists up to 800 table rows and the HTML up to 3,000.
-
-### Scan options (the sliders button in the title bar, or "Ignore rules & scan options…" on each tab)
-
-- **Ignore rules** — one per line, a subset of `.gitignore` syntax, case-insensitive: `node_modules/` (folders only), `*.tmp`, `/build` (top level only), `docs/drafts` (any rule containing `/` is anchored to the scanned folder), `**/cache/**`, `# comment`. `!negation` is not supported. The defaults skip `node_modules/`, `__pycache__/`, `Thumbs.db`, `desktop.ini`, `~$*` and `*.tmp`.
-- **Skip online-only cloud files** (on by default) — OneDrive "Files On-Demand" placeholders on Windows, iCloud / File Provider placeholders on macOS. They are never opened or hashed, so nothing gets downloaded. Each tab says how many were skipped. Linux has no such placeholders.
-- **Use the Go engine** — shows whether the engine was found and whether it is new enough (2.1 or later).
-
-Changing these options makes the next scan (and the Find index) re-read folders, so cached results never disagree with your rules.
-
-**How the Find cache works.** The scanned folder structure is saved to disk. Refreshing re-lists only folders whose modified time changed (use _Full rescan_ to force everything). Every query and its results are remembered, so repeating a search is instant, even after restarting; they are discarded automatically when the index changes. The search is over file and folder _names_, not file contents, and uses no machine-learning model, so nothing leaves your computer.
-
-Run the tests with `python -m unittest discover gui/tests` and `cd engine && go test ./...`.
-
-## Using File Picker
-
-The main workflow is organized into four steps.
-
-### 1. Select a search directory
-
-Under **Search in**, select the folder containing the files you want to search.
-
-You can browse for a directory or drag and drop a folder into the application.
-
-The search includes files in all subdirectories.
-
-### 2. Provide filenames
-
-Under **Names to find**, enter the filenames you want to locate.
-
-You can:
-
-- Paste a list of names directly into the application.
-- Import a `.txt` file.
-- Import a `.csv` file.
-- Drag and drop a supported file into the input area.
-
-For CSV files, you can specify whether the file contains a header row and choose which column contains the filenames.
-
-File Picker displays the total number of entries, unique names, and duplicates. Hovering over the summary provides additional information about duplicate entries.
-
-### 3. Configure matching
-
-The default matching settings are suitable for most searches.
-
-For more control, select **Customize** to adjust how filenames are compared.
-
-| Setting          | Description                                                                                   |
-| ---------------- | --------------------------------------------------------------------------------------------- |
-| Match mode       | Whole part (default), Anywhere, Exact name, Starts with, or Ends with                         |
-| Compare with     | Filename without extension, filename with extension, or relative file path                    |
-| Case sensitivity | Enable or disable case-sensitive matching                                                     |
-| Duplicates       | Merge duplicate entries or stop and report them                                               |
-| Multiple matches | Choose how to handle files matching more than one search term                                 |
-| File types       | Limit results to specific extensions, such as `pdf, jpg`, or leave empty to include all types |
-
-**Matching example**
-
-With the default **Whole part** mode, searching for `abc` will match:
-
-```text
-gg_abc_.txt
-dq122130219_abc_1291291.txt
-```
-
-However, it will not match:
-
-```text
-gg_abcde_.txt
-```
-
-This mode is useful when filenames contain identifiers separated by characters such as underscores.
-
-**Case sensitivity**
-
-By default, matching is case-insensitive. For example, `ABC`, `AbC`, and `abc` are treated as the same search name.
-
-**Duplicate handling**
-
-Duplicate search terms can be merged while preserving either the first or last spelling, or the application can stop and display the duplicates for review.
-
-**Overlapping matches**
-
-When a file matches multiple search terms, you can choose one of the following rules:
-
-- Longest matching name
-- Shortest matching name
-- First matching name in the input list
-- All matching names
-
-This setting only affects exports using **One folder per name**.
-
-### 4. Choose an output format
-
-Under **Output**, select how you want the matching files to be exported.
-
-Available formats:
-
-- **ZIP:** Create a ZIP archive containing the matched files.
-- **Folder:** Copy the matched files into a destination directory.
-- **TAR:** Create an uncompressed TAR archive.
-- **TAR.GZ:** Create a compressed TAR archive.
-
-Additional options include:
-
-**One folder per name**
-
-Organize the exported files into separate folders based on the search names they matched.
-
-**CSV report**
-
-Generate a report containing information about the search and its results.
-
-### Preview and export
-
-Once the search and output settings are configured, you can:
-
-**Preview** — Run the search and review matching files without copying or exporting anything.
-
-**Export** — Search for matching files and write them to the selected destination.
-
-After the operation, File Picker displays a summary of the results.
-
-You can also select **Names not found** to review any search terms that did not match a file.
-
-## Interface Design
-
-The interface is designed to keep common tasks straightforward while making advanced options available when needed.
-
-### Guided workflow
-
-The main window follows a four-step process. Completed steps are marked with a checkmark, and a checklist provides an overview of the current configuration.
-
-### Accessible settings
-
-Frequently used settings are displayed directly in the interface.
-
-Advanced matching and output options are grouped under **Customize**, keeping the main window uncluttered without limiting functionality.
-
-### Clear actions and feedback
-
-Before an export, the action bar summarizes the operation, for example:
-
-```text
-4 names → matched_files.zip
-```
-
-Action buttons are labeled according to the selected output, such as **Export ZIP** or **Copy to folder**.
-
-After an operation, the interface provides relevant next steps, including **Show in folder** and **Open report**.
-
-Search and export statistics are displayed separately for easy reference.
-
-### File and folder display
-
-File and folder names are given priority, while their locations are shown in secondary text. This makes results easier to scan, especially when working with long directory paths.
-
-### Appearance and accessibility
-
-The interface supports light and dark themes, clear focus and disabled states, and visual feedback when dragging files or folders over supported fields.
-
-### Keyboard shortcuts
-
-| Shortcut            | Action                                                                     |
-| ------------------- | -------------------------------------------------------------------------- |
-| `Ctrl+Enter`        | Start export                                                               |
-| `Ctrl+P`            | Preview matches                                                            |
-| `Esc`               | Cancel the current operation                                               |
-| `Ctrl+1` … `Ctrl+7` | Open the Run, Compare, Snapshots, Duplicates, Space, Find and History tabs |
-
-## Window Management
-
-File Picker uses a custom title bar that combines the application name, Run and History tabs, theme selection, and standard window controls.
-
-Despite the custom appearance, the window is designed to retain native operating system behavior.
-
-### Windows 10 and 11
-
-The application supports standard window interactions, including:
-
-- Dragging the title bar to move the window.
-- Double-clicking the title bar to maximize or restore.
-- Dragging a maximized window to restore its previous size.
-- Resizing from any window edge or corner.
-- Aero Snap using screen edges or `Win` + arrow keys.
-- Windows 11 Snap Layouts when hovering over the maximize button.
-- Native window shadows, animations, and Windows 11 rounded corners.
-
-Maximized windows respect the available screen area and do not cover the taskbar. Auto-hidden taskbars also remain accessible.
-
-### macOS and Linux
-
-Window movement and resizing are handled by the operating system's window manager.
-
-### Native title bar fallback
-
-If the custom title bar causes problems on a Windows system, you can restore the standard title bar by setting:
-
-```text
-FILEPICKER_NATIVE_FRAME=1
-```
-
-Launch File Picker with this environment variable enabled to use the native window frame.
-
-## Settings and Export History
-
-File Picker automatically saves your settings so you can continue where you left off.
-
-Saved information includes:
-
-- Search directory and output preferences
-- Matching configuration
-- Complete filename list
-- Window size
-- Selected theme
-
-Settings are saved as changes are made and restored the next time the application starts.
-
-### Export history
-
-The **History** tab records completed export operations and their results.
-
-From a previous run, you can:
-
-- **Load settings:** Restore its original configuration.
-- **Run again:** Repeat the operation.
-- **Show output:** Open the export destination.
-- **Open report:** View the associated report.
-
-### Data storage
-
-Application data is stored in the standard user data directory for each operating system.
-
-| Operating system | Location                                              |
-| ---------------- | ----------------------------------------------------- |
-| Windows          | `%APPDATA%\FilePicker\FilePicker`                     |
-| macOS            | `~/Library/Application Support/FilePicker/FilePicker` |
-| Linux            | `~/.local/share/FilePicker/FilePicker`                |
-
-Filename lists are stored once and referenced by both settings and history.
-
-This avoids repeatedly saving large lists. For example, a 180,000-name list does not need to be duplicated for every historical export.
-
-## Command-Line Interface
-
-File Picker can also run without the desktop interface.
-
-This is useful for automation, scheduled tasks, scripts, and workflows that do not require manual interaction.
-
-### Generate a job configuration
-
-```bash
-gui/bin/picker example > job.json
-```
-
-This creates a sample job file containing the available options and their default values.
-
-Edit `job.json` to configure the search and export settings.
-
-### Preview matches
-
-```bash
-gui/bin/picker scan --job job.json --format text
-```
-
-Runs the search without exporting files.
-
-### Export files
-
-```bash
-gui/bin/picker export --job job.json --format text
-```
-
-Searches for matching files and exports them according to the job configuration.
-
-### List a folder tree and checksum files
-
-The analysis tabs use two more commands, which are also handy in scripts:
+The analysis tabs use two more commands, which are handy in scripts too:
 
 ```bash
 echo '{"root":"/data","skipHidden":true,"ignore":"node_modules/\n*.tmp"}' | gui/bin/picker tree --format text
 echo '{"root":"/data","files":["a/x.txt","b/y.bin"]}' | gui/bin/picker hash
 ```
 
-`tree` lists every folder with its files' sizes and modified times, in parallel; `hash` prints SHA-256 checksums (first 16 bytes, as hex). Both stream JSON events and support cancelling.
+`tree` lists every folder with its files' sizes and modified times, in parallel. `hash` prints SHA-256 checksums (the first 16 bytes, as hex). Both stream JSON events and can be cancelled. The job format and events are documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-For more information about the job format and communication events, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
+## How it works
 
-## Performance and Reliability
+**A Go engine and a Python / Qt interface, as separate processes.**
 
-File Picker is optimized for filename-based searches across large directory structures.
+- The **Go engine** does directory scanning, name matching, checksums and exports. Go gives fast, concurrent code that compiles to a standalone executable for every platform.
+- The **Python and Qt interface** provides native dialogs, efficient tables and a consistent look on every system.
+- Running the engine as its own process keeps the interface responsive during long scans and makes the engine usable from scripts. The two communicate through a documented protocol ([docs/PROTOCOL.md](docs/PROTOCOL.md)), so either can be updated independently.
 
-### Search performance
+**Performance.**
 
-The engine searches filenames and directory paths without opening file contents.
+- The engine matches file names and paths without opening file contents, so speed depends on the number of files and the filesystem, not on how much data they hold. Searching a 31 GB directory does not read 31 GB; only exported files are read. In testing, **180,000 files against 180,000 names took about 1.5 seconds** (results vary with hardware and settings).
+- For exports of already-compressed files (JPEG, video, many PDFs) choose **Fastest (no compression)**, since extra compression saves little and costs time.
+- The analysis tabs use the engine's parallel scanner when it is available. Re-scans of a cached folder skip every folder whose modified time has not changed.
 
-This means search performance depends primarily on the number of files, directory structure, and filesystem speed rather than the total size of the stored data.
+**Reliability.**
 
-For example, searching a directory containing 31 GB of data does not require reading all 31 GB.
+- Archives are written to a temporary `.partial` file and renamed only on success, so a cancelled or interrupted export never leaves an incomplete archive under the final name.
+- ZIP64 is enabled automatically, so files and archives larger than 4 GB work.
+- The only files of yours that File Picker ever removes are duplicates you choose to move to the Trash. It asks first, they can be restored, and one copy of each file is always kept. (Deleting a scan or the history only removes File Picker's own records.)
 
-Only files selected for export are read.
+## Development
 
-In testing, a search involving **180,000 files and 180,000 search names completed in approximately 1.5 seconds**.
-
-Actual performance will vary depending on the system, storage device, directory structure, and matching configuration.
-
-### Export performance
-
-Export speed depends largely on storage performance, the number of matched files, and the selected compression settings.
-
-For file types that are already compressed, such as JPEG images, videos, and many PDFs, using **Fastest (no compression)** for ZIP exports is generally recommended.
-
-Additional compression often provides limited space savings while increasing processing time.
-
-### Safe archive creation
-
-Archives are initially written using a temporary `.partial` filename.
-
-Once the export completes successfully, the archive is renamed to its final destination.
-
-This prevents an interrupted or cancelled operation from leaving an incomplete archive under the intended output filename.
-
-### Large archive support
-
-ZIP64 support is enabled automatically, allowing the application to work with files and archives larger than 4 GB.
-
-## Testing
-
-Both halves have automated tests, and both run on Windows, macOS and Linux in CI.
-
-```bash
-cd engine && go test ./...                    # Go engine
-python -m unittest discover gui/tests         # Python logic (build the engine first so the parity tests run)
-python gui/run_gui.py --check                 # self-test: engine, analysis commands, report support
-```
-
-The Python tests include **parity tests** that scan the same folders with the Go engine and with the built-in Python scanner and require identical results (file lists, checksums, ignore rules, cached-folder reuse, cancellation, and the automatic fallback when the engine is missing).
-
-The tests cover:
-
-- Filename list parsing
-- All supported matching modes
-- Overlapping match rules
-- Complete ZIP exports and folder structure verification
-- Operation cancellation
-
-The engine tests also cover the ignore-rule matcher, the parallel folder walker (filters, counters, reuse of known folders, cancellation) and the checksum code (including a known SHA-256 value). Together these help verify that search behavior and exported results remain consistent as the code evolves.
-
-## Building a Standalone Application
-
-File Picker can be packaged as a standalone executable, allowing it to run on another computer without installing Python, Go, or the application dependencies.
-
-### Windows
-
-To build a single executable, double-click:
-
-```cmd
-package.cmd
-```
-
-The packaging script automatically:
-
-1. Builds the Go search engine.
-2. Creates an isolated Python build environment (`.venv-build`).
-3. Installs the required packaging dependencies.
-4. Bundles the interface, Qt libraries, and engine using PyInstaller.
-5. Verifies the generated application.
-
-The final executable is available at:
+### Project structure
 
 ```text
-dist\FilePicker.exe
+Files-Picker/
+├── engine/       Go engine: search, export, and the fast tree / hash scanners
+├── gui/          Python and Qt interface (tests in gui/tests)
+├── docs/         Protocol documentation and screenshots
+├── .github/      GitHub Actions workflows (tests, packaging, releases)
+├── build.sh / build.ps1 / build.cmd      Build the engine
+└── package.sh / package.ps1 / package.cmd  Build the standalone application
 ```
 
-You can copy this file to another Windows computer and run it directly.
-
-### Build requirements
-
-Building the Windows executable requires:
-
-- Go 1.22 or later
-- Python 3.9 or later from [python.org](https://www.python.org/downloads/)
-- Python added to the system PATH
-
-During the first build, the script downloads dependencies such as PySide6 and PyInstaller. Subsequent builds can reuse the prepared environment.
-
-### Single-file vs. folder distribution
-
-By default, PyInstaller creates a single executable.
-
-A single-file build extracts its bundled components at startup, which can add a few seconds to launch time.
-
-For faster startup, build a folder-based distribution instead:
-
-```cmd
-package.cmd -OneFolder
-```
-
-The output is created at:
-
-```text
-dist\FilePicker\
-```
-
-This directory contains the application and its dependencies. You can distribute it by compressing the entire folder into a ZIP archive.
-
-### Windows security warnings
-
-The generated executable is not digitally signed.
-
-As a result, Windows SmartScreen may display a warning when running it on another computer.
-
-If you trust the build and have verified its source, you can use **More info → Run anyway** to launch the application.
-
-Some antivirus products may also flag unsigned PyInstaller executables. Folder-based builds can be less likely to trigger these warnings.
-
-For wider distribution, code signing is recommended.
-
-### Verify the packaged application
-
-Run:
-
-```cmd
-FilePicker.exe --check
-```
-
-This is a self-test of the packaged app. It checks that the bundled engine is available and runs, that it supports the `tree` and `hash` commands used by the analysis tabs (and agrees with the built-in scanner), and that the Qt parts needed for HTML/PDF reports are included.
-
-The command returns exit code `0` when everything passes, and a non-zero code otherwise (`1` engine missing, `2` engine too old, `3` results differ, `4` a Qt module is missing).
-
-### macOS and Linux
-
-For macOS and Linux, use:
+### Tests
 
 ```bash
-./package.sh
+cd engine && go test ./...                 # Go engine
+python -m unittest discover gui/tests      # Python (build the engine first so the parity tests run)
+python gui/run_gui.py --check              # self-test: engine, analysis commands, report support
 ```
 
-The generated application is placed in the `dist` directory.
+The engine tests cover filename list parsing, every matching mode, overlapping-match rules, full ZIP exports, cancellation, the ignore-rule matcher, the parallel folder walker, and the checksum code. The Python tests include **parity tests** that scan the same folders with the Go engine and with the built-in Python scanner and require identical results (file lists, checksums, ignore rules, cached-folder reuse, cancellation and the fallback when the engine is missing), plus checks that every module compiles on the oldest supported Python and that each tab's layout holds at the smallest window size. Qt tests run headless (`QT_QPA_PLATFORM=offscreen`).
 
-| Platform | Output                |
-| -------- | --------------------- |
-| macOS    | `dist/FilePicker.app` |
-| Linux    | `dist/FilePicker`     |
+### Building a standalone application
 
-## Continuous Integration and Releases
+A standalone build runs on another computer without Python, Go or any dependencies.
+
+**Windows:** double-click `package.cmd`, or run it from a terminal. It builds the engine, creates an isolated Python environment (`.venv-build`), installs PyInstaller, bundles the interface, Qt and engine, and verifies the result. The output is `dist\FilePicker.exe`. This needs Go 1.22+ and Python 3.10+ on your `PATH`; the first build downloads PySide6 and PyInstaller.
+
+By default you get a single file, which unpacks itself at start-up (a few seconds). For faster start-up use a folder build, `package.cmd -OneFolder`, which creates `dist\FilePicker\`; zip the whole folder to distribute it.
+
+**macOS and Linux:** run `./package.sh`. The output is `dist/FilePicker.app` on macOS and `dist/FilePicker` on Linux.
+
+**Verify a build** with `FilePicker.exe --check` (or `./dist/FilePicker --check`). It checks that the bundled engine is found and runs, that it supports `tree` and `hash` and agrees with the built-in scanner, and that the Qt modules for reports are included. The exit code is `0` when everything passes, otherwise `1` engine missing, `2` engine too old, `3` results differ, `4` a Qt module is missing.
+
+#### Windows security warnings
+
+The executable is not digitally signed, so Windows SmartScreen may warn when you run it on another computer. If you trust the build and its source, choose **More info → Run anyway**. Some antivirus products flag unsigned PyInstaller executables; folder builds are less likely to. Code signing is recommended for wider distribution.
+
+### Continuous integration and releases
 
 Two GitHub Actions workflows live in `.github/workflows/`.
 
-### `ci.yml` — tests
+**`ci.yml` runs the tests.** It runs on pull requests, on pushes to branches other than `main`, and whenever `build.yml` calls it.
 
-Runs on pull requests, on pushes to branches other than `main`, and whenever `build.yml` calls it.
+| Job | Runs on | What it does |
+|---|---|---|
+| Engine | Ubuntu, Windows, macOS | `gofmt` check (Linux), `go vet`, `go test`; on Linux it also cross-compiles the engine for all six targets |
+| GUI | Ubuntu (Python 3.10 and 3.12), Windows, macOS | builds the engine, installs the GUI requirements, runs the Python tests, then `run_gui.py --check` |
 
-| Job        | Runs on                                       | What it does                                                                                                                                                                          |
-| ---------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Engine** | Ubuntu, Windows, macOS                        | `gofmt` check (Linux), `go vet`, `go test`; on Linux it also cross-compiles the engine for all six targets                                                                            |
-| **GUI**    | Ubuntu (Python 3.10 and 3.12), Windows, macOS | builds the engine, installs the GUI requirements, runs the Python unit tests, then runs `run_gui.py --check`. Qt runs headless (`QT_QPA_PLATFORM=offscreen`), so no display is needed |
+**`build.yml` packages and releases.** It runs on every push to `main`, on version tags (`v*`), and manually from the **Actions** tab (*Build → Run workflow*).
 
-### `build.yml` — packaging and releases
+1. It calls `ci.yml` first (these appear as the `test / …` jobs of a Build run); nothing is packaged if a test fails.
+2. **Package** runs `package.ps1` / `package.sh` on Windows, macOS and Linux runners, producing `FilePicker-windows-x64.exe`, `FilePicker-macos-arm64.zip` and `FilePicker-linux-x64.tar.gz`. Those scripts run `--check` on the result and fail the job if the packaged app cannot run its engine.
+3. **Command-line engine** cross-compiles `picker` for Windows, macOS and Linux (x64 and arm64).
+4. **Release** (tags only) writes `SHA256SUMS.txt` and publishes a GitHub Release with generated notes.
 
-Runs on every push to `main`, on version tags (`v*`), and manually from the **Actions** tab (**Build → Run workflow**).
-
-1. Calls `ci.yml`; nothing is packaged if a test fails.
-2. **Package** — on Windows, macOS and Linux runners it runs the same `package.ps1` / `package.sh` you can run locally. Those scripts build the engine, bundle the app with PyInstaller, and run `--check` on the result, failing the job if the packaged app cannot find or run its engine. Output: `FilePicker-windows-x64.exe`, `FilePicker-macos-arm64.zip`, `FilePicker-linux-x64.tar.gz`.
-3. **Command-line engine** — cross-compiles `picker` for Windows, macOS and Linux (x64 and arm64) and archives each.
-4. **Release** (tags only) — downloads everything, writes `SHA256SUMS.txt`, and publishes a GitHub Release with generated notes.
-
-Files from non-tag runs are kept for 30 days as workflow artifacts.
-
-**To publish a release:**
+Files from non-tag runs are kept for 30 days as workflow artifacts. To publish a release:
 
 ```bash
 git tag v2.1.0
 git push origin v2.1.0
 ```
 
-The workflow needs no secrets: the release step uses the repository's built-in token with `contents: write` permission, granted only to that one job. The macOS and Windows programs are not code-signed; add signing and notarization steps to `build.yml` if you need to remove the security prompts.
+No secrets are needed: the release step uses the repository's built-in token with `contents: write` permission, granted to that one job only. The macOS and Windows programs are not code-signed; add signing and notarization steps to `build.yml` if you need to remove the security prompts.
