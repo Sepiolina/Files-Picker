@@ -42,7 +42,7 @@ import (
 	"filepicker/engine/internal/scan"
 )
 
-const version = "2.1.0" // 2.1: adds the tree and hash commands
+const version = "2.2.1" // 2.2.1: buffered output, cancel never hangs, noDirTime (faster huge/network scans)
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout))

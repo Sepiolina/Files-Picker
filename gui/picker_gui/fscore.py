@@ -17,6 +17,7 @@ Every long function takes `cancel` (a threading.Event) and `progress` (a callabl
 taking a dict) so a worker thread can stop it and show progress.
 """
 
+import collections
 import gzip
 import hashlib
 import heapq
@@ -30,6 +31,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zlib
 from collections import Counter, defaultdict, namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from fnmatch import fnmatchcase
@@ -204,23 +206,54 @@ def _engine_usable(use_engine):
     return (config.use_engine if use_engine is None else use_engine) and engine_status()[0]
 
 
+CANCEL_GRACE_S = 5.0   # after "cancel", how long the engine may take to stop before it is killed
+
+
 def _run_engine(command, job, cancel, on_event, extra_files=()):
-    """Run `picker <command>`, feed it the job, call on_event(dict) per line. Raises Cancelled / RuntimeError."""
+    """
+    Run `picker <command>`, feed it the job, call on_event(dict) per line. Raises Cancelled / RuntimeError.
+
+    A watchdog thread delivers the cancel request independently of the output, and kills the engine if it
+    does not stop within CANCEL_GRACE_S (e.g. blocked on a sleeping disk or a dead network drive), so
+    Cancel can never leave the app waiting forever.
+    """
     exe = engine_status()[2]
     proc = subprocess.Popen([exe, command, "--stdin-control"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, **_spawn_flags())
-    cancelled = False
-    try:
-        proc.stdin.write((json.dumps(job, ensure_ascii=False) + "\n").encode("utf-8"))
-        proc.stdin.flush()
-        for raw in proc.stdout:
-            if cancel is not None and cancel.is_set() and not cancelled:
-                cancelled = True
+                            stderr=subprocess.PIPE, **_spawn_flags())
+    err_tail = collections.deque(maxlen=20)
+    finished = threading.Event()
+
+    def drain_stderr():
+        try:
+            for line in proc.stderr:
+                err_tail.append(line.decode("utf-8", "replace").rstrip())
+        except (OSError, ValueError):
+            pass
+
+    def watchdog():
+        while not finished.wait(0.2):
+            if cancel is not None and cancel.is_set():
                 try:
                     proc.stdin.write(b"cancel\n")
                     proc.stdin.flush()
-                except OSError:
+                except (OSError, ValueError):
                     pass
+                if not finished.wait(CANCEL_GRACE_S):
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                return
+
+    threading.Thread(target=drain_stderr, daemon=True).start()
+    threading.Thread(target=watchdog, daemon=True).start()
+    try:
+        try:
+            proc.stdin.write((json.dumps(job, ensure_ascii=False) + "\n").encode("utf-8", "replace"))
+            proc.stdin.flush()
+        except OSError:
+            pass  # the engine died at start-up: the exit code and stderr below say why
+        for raw in proc.stdout:
             try:
                 ev = json.loads(raw)
             except ValueError:
@@ -231,21 +264,28 @@ def _run_engine(command, job, cancel, on_event, extra_files=()):
             if kind == "cancelled":
                 raise Cancelled()
             on_event(ev)
-        if cancelled:
+        try:
+            code = proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            code = proc.wait(timeout=10)
+        if cancel is not None and cancel.is_set():
             raise Cancelled()
-        if proc.wait(timeout=30) not in (0,):
-            raise RuntimeError(f"engine exited with code {proc.returncode}")
+        if code != 0:
+            detail = " | ".join(list(err_tail)[-3:])
+            raise RuntimeError(f"engine exited with code {code}" + (f": {detail}" if detail else ""))
     finally:
+        finished.set()
         if proc.poll() is None:
             proc.kill()
         try:
             proc.wait(timeout=10)   # always reap the process
         except subprocess.TimeoutExpired:
             pass
-        for stream in (proc.stdin, proc.stdout):
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
             try:
                 stream.close()
-            except OSError:
+            except (OSError, ValueError):
                 pass
         for f in extra_files:
             try:
@@ -254,7 +294,37 @@ def _run_engine(command, job, cancel, on_event, extra_files=()):
                 pass
 
 
-def _engine_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud):
+NETWORK_WORKERS = 64   # folder reads in flight on a network drive: it is latency-bound, not bandwidth-bound
+_NET_FS = {"nfs", "nfs4", "cifs", "smb", "smb2", "smb3", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "ceph",
+           "davfs", "fuse.rclone", "fuseblk.smb"}
+
+
+def is_network_path(path):
+    """True for a UNC share (\\\\server\\share), a mapped network drive, or a network mount on Linux."""
+    path = os.path.abspath(path)
+    try:
+        if IS_WINDOWS:
+            if path.startswith("\\\\"):
+                return not path.startswith("\\\\?\\") or path.upper().startswith("\\\\?\\UNC\\")
+            import ctypes
+            drive = os.path.splitdrive(path)[0]
+            return bool(drive) and ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4   # DRIVE_REMOTE
+        if sys.platform.startswith("linux"):
+            best, kind = "", ""
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) > 2:
+                        mount = parts[1].replace("\\040", " ")
+                        if (path == mount or path.startswith(mount.rstrip("/") + "/")) and len(mount) >= len(best):
+                            best, kind = mount, parts[2]
+            return kind in _NET_FS
+    except (OSError, AttributeError, ValueError):
+        pass
+    return False
+
+
+def _engine_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud, dir_times=True):
     known_path = None
     if prev:
         fd, known_path = tempfile.mkstemp(suffix=".jsonl", prefix="picker-known-")
@@ -279,7 +349,8 @@ def _engine_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud):
             done.update(ev)
 
     job = {"root": os.path.abspath(root), "skipHidden": bool(skip_hidden), "skipCloud": bool(skip_cloud),
-           "ignore": ignore or "", "known": known_path or ""}
+           "ignore": ignore or "", "known": known_path or "", "noDirTime": not dir_times,
+           "workers": NETWORK_WORKERS if is_network_path(root) else 0}
     _run_engine("tree", job, cancel, on_event, [known_path] if known_path else [])
     if not done:
         raise RuntimeError("the engine did not finish")
@@ -291,7 +362,8 @@ def _engine_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud):
 
 # ---- scanning -----------------------------------------------------------------------------
 
-def walk(root, cancel=None, progress=None, skip_hidden=True, prev=None, ignore=None, skip_cloud=None, use_engine=None):
+def walk(root, cancel=None, progress=None, skip_hidden=True, prev=None, ignore=None, skip_cloud=None, use_engine=None,
+         dir_times=True):
     """
     Scan `root` recursively. Returns
         {"dirs": {rel: {"m": mtime_ns, "f": [[name, size, mtime_ns], ...], "d": [subdir names]}},
@@ -303,16 +375,21 @@ def walk(root, cancel=None, progress=None, skip_hidden=True, prev=None, ignore=N
 
     prev: a previous result["dirs"]. A directory whose own mtime is unchanged is not listed
     again (adding, removing or renaming an entry changes the folder's mtime).
+
+    dir_times=False: the folders' own modified times are not needed (everything except the Find index), so the
+    engine skips reading them - one network round trip less per folder. Their "m" is then 0.
     """
     ignore = config.ignore if ignore is None else ignore
     skip_cloud = config.skip_cloud if skip_cloud is None else skip_cloud
     if _engine_usable(use_engine):
         try:
-            return _engine_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud)
+            return _engine_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud, dir_times or bool(prev))
         except Cancelled:
             raise
-        except Exception:
-            pass  # any engine problem: carry on in Python
+        except Exception as e:  # any engine problem: carry on in Python, but say so
+            result = _py_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud)
+            result["engine_error"] = str(e) or type(e).__name__
+            return result
     return _py_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud)
 
 
@@ -383,14 +460,24 @@ def _py_walk(root, cancel, progress, skip_hidden, prev, ignore, skip_cloud):
             "cloud": cloud, "ignored": ignored, "engine": False}
 
 
-def flatten(dirs):
-    """walk()["dirs"] -> {rel_path: (size, mtime_ns)}"""
+def flatten(dirs, consume=False):
+    """
+    walk()["dirs"] -> {rel_path: (size, mtime_ns)}
+    consume=True empties `dirs` while reading it, so the per-folder records are freed as the flat map grows
+    (halves the peak memory on trees with hundreds of thousands of files).
+    """
     out = {}
-    for rel, rec in dirs.items():
+    items = _drain(dirs) if consume else dirs.items()
+    for rel, rec in items:
         prefix = rel + "/" if rel else ""
         for name, size, m in rec["f"]:
             out[prefix + name] = (size, m)
     return out
+
+
+def _drain(d):
+    while d:
+        yield d.popitem()
 
 
 PARTIAL_BYTES = 64 * 1024
@@ -418,18 +505,24 @@ def hash_many(root, rels, cancel=None, progress=None, workers=4, partial=0, use_
     """Hash many files in parallel. Returns {rel: hexdigest or None (unreadable)}."""
     if not rels:
         return {}
+    out = {}
     if _engine_usable(use_engine):
         try:
-            return _engine_hash(root, rels, cancel, progress, partial)
+            _engine_hash(root, rels, cancel, progress, partial, out)
         except Cancelled:
             raise
         except Exception:
-            pass
-    return _py_hash(root, rels, cancel, progress, workers, partial)
+            pass  # keep the checksums already received; only the rest is redone below
+    missing = [r for r in rels if r not in out]
+    if missing:
+        done = len(rels) - len(missing)
+        shifted = (lambda p: progress({**p, "hashed": done + p.get("hashed", 0), "hash_total": len(rels)})) \
+            if progress else None
+        out.update(_py_hash(root, missing, cancel, shifted, workers, partial))
+    return out
 
 
-def _engine_hash(root, rels, cancel, progress, partial):
-    out = {}
+def _engine_hash(root, rels, cancel, progress, partial, out):
 
     def on_event(ev):
         if ev.get("type") == "hashes":
@@ -439,9 +532,6 @@ def _engine_hash(root, rels, cancel, progress, partial):
 
     _run_engine("hash", {"root": os.path.abspath(root), "files": list(rels), "partial": partial, "workers": 4},
                 cancel, on_event)
-    if len(out) != len(rels):
-        raise RuntimeError("the engine returned fewer checksums than requested")
-    return out
 
 
 def _py_hash(root, rels, cancel, progress, workers, partial):
@@ -506,6 +596,58 @@ def _pair_keys(files, by_name):
     return out
 
 
+class _AnyEvent:
+    """Looks like a threading.Event that is set when any of the given ones is."""
+
+    def __init__(self, *events):
+        self.events = [e for e in events if e is not None]
+
+    def is_set(self):
+        return any(e.is_set() for e in self.events)
+
+
+def _walk_both(a, b, cancel, progress, skip_hidden):
+    """
+    Scan two folders at the same time. Each scan spends most of its time waiting (on a network drive, mostly for
+    replies), so running both together takes about as long as the slower one instead of the sum of the two.
+    Returns (walk of a, walk of b).
+    """
+    stop = threading.Event()               # one side failed: stop the other
+    either = _AnyEvent(cancel, stop)
+    results, errors = {}, {}
+    state, lock = {"A": {}, "B": {}}, threading.Lock()
+
+    def report(side):
+        def cb(p):
+            if not progress:
+                return
+            with lock:
+                state[side] = p
+                both = state["A"], state["B"]
+            progress({"phase": "Scanning both folders…", "current": "",
+                      "files": sum(x.get("files", 0) for x in both), "dirs": sum(x.get("dirs", 0) for x in both),
+                      "bytes": sum(x.get("bytes", 0) for x in both)})
+        return cb
+
+    def run(side, root):
+        try:
+            results[side] = walk(root, either, report(side), skip_hidden, dir_times=False)
+        except BaseException as e:  # noqa: BLE001 - handed back to the caller's thread below
+            errors[side] = e
+            stop.set()
+
+    other = threading.Thread(target=run, args=("B", b), daemon=True)
+    other.start()
+    run("A", a)
+    other.join()
+    if cancel is not None and cancel.is_set():
+        raise Cancelled()
+    for side in ("A", "B"):   # a real failure beats the Cancelled it caused in the other side
+        if side in errors and not isinstance(errors[side], Cancelled):
+            raise errors[side]
+    return results["A"], results["B"]
+
+
 def compare_folders(a, b, mode="size", by_name=False, skip_hidden=True, cancel=None, progress=None):
     """
     Compare folder `a` with folder `b`.
@@ -513,16 +655,16 @@ def compare_folders(a, b, mode="size", by_name=False, skip_hidden=True, cancel=N
     by_name: ignore sub-folders and pair files by name only (for differently organised copies)
     """
     def phase(text):
+        _check(cancel)
         if progress:
             progress({"phase": text})
 
     t0 = time.monotonic()
-    phase("Scanning A…")
-    wa = walk(a, cancel, lambda p: progress and progress({**p, "phase": "Scanning A…"}), skip_hidden)
-    phase("Scanning B…")
-    wb = walk(b, cancel, lambda p: progress and progress({**p, "phase": "Scanning B…"}), skip_hidden)
-    fa, fb = flatten(wa["dirs"]), flatten(wb["dirs"])
+    wa, wb = _walk_both(a, b, cancel, progress, skip_hidden)
+    phase("Matching files…")
+    fa, fb = flatten(wa.pop("dirs"), consume=True), flatten(wb.pop("dirs"), consume=True)
     ka, kb = _pair_keys(fa, by_name), _pair_keys(fb, by_name)
+    _check(cancel)
 
     pairs, only_a, only_b = [], [], []
     for key, ra in ka.items():
@@ -538,6 +680,7 @@ def compare_folders(a, b, mode="size", by_name=False, skip_hidden=True, cancel=N
         hashes_b = hash_many(b, [p[1] for p in need], cancel, progress)
 
     rows = []
+    phase("Comparing…")
 
     def top_of(rel):
         return rel.split("/", 1)[0] if "/" in rel else "(top level)"
@@ -579,6 +722,7 @@ def compare_folders(a, b, mode="size", by_name=False, skip_hidden=True, cancel=N
         s, m = fb[rb]
         rows.append(Row("b_only", rb, "", rb, None, s, None, m, ext_of(rb), top_of(rb)))
 
+    phase("Summarising…")
     stats = compare_stats(rows)
     stats.update({"files_a": wa["files"], "files_b": wb["files"], "bytes_a": wa["bytes"], "bytes_b": wb["bytes"],
                   "errors": wa["errors"] + wb["errors"], "elapsed": time.monotonic() - t0,
@@ -686,11 +830,16 @@ class SnapshotStore:
 
     def load_files(self, snap_id):
         """-> {rel: (size, mtime_ns, hash_or_None)}"""
-        with gzip.open(self.dir / f"{snap_id}.json.gz", "rt", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with gzip.open(self.dir / f"{snap_id}.json.gz", "rt", encoding="utf-8") as f:
+                data = json.load(f)
+        except (EOFError, zlib.error) as e:   # a truncated / damaged file
+            raise ValueError(f"the scan file is damaged ({e})") from e
         modern = data.get("meta", {}).get("algo") == "sha256"  # older scans used another checksum
-        return {rel: (v[0], v[1], (v[2] if len(v) > 2 else None) if modern else None)
-                for rel, v in data["files"].items()}
+        files = data["files"]
+        for rel, v in files.items():   # convert in place: no second 600,000-entry dict next to the first
+            files[rel] = (v[0], v[1], (v[2] if len(v) > 2 else None) if modern else None)
+        return files
 
     def previous_for(self, root, before_time=None):
         """Newest snapshot of the same folder (older than before_time if given)."""
@@ -700,17 +849,27 @@ class SnapshotStore:
 
     def scan_and_save(self, root, hashed=False, skip_hidden=True, cancel=None, progress=None):
         """Scan `root`, save it, and diff against the previous scan of that folder."""
+        def phase(text):
+            if progress:
+                progress({"phase": text})
+
         t0 = time.monotonic()
         root = os.path.abspath(root)
-        result = walk(root, cancel, lambda p: progress and progress({**p, "phase": "Scanning…"}), skip_hidden)
-        flat = flatten(result["dirs"])
+        result = walk(root, cancel, lambda p: progress and progress({**p, "phase": "Scanning…"}), skip_hidden,
+                      dir_times=False)
+        n_dirs, n_bytes = len(result["dirs"]), result["bytes"]
+        phase("Organising…")
+        flat = flatten(result.pop("dirs"), consume=True)   # frees the folder records as it goes
+        _check(cancel)
         prev_meta = self.previous_for(root)
         prev_files = None
         if prev_meta:
+            phase("Loading the previous scan…")
             try:
                 prev_files = self.load_files(prev_meta["id"])
             except (OSError, ValueError):
                 prev_files = None
+        _check(cancel)
         hashes = {}
         if hashed:
             reuse = {}
@@ -721,24 +880,34 @@ class SnapshotStore:
                     reuse[rel] = old[2]  # unchanged since the last scan: no need to read it again
                 else:
                     todo.append(rel)
+            todo.sort()   # folder by folder: far fewer disk seeks on a spinning drive
             hashes = reuse
             hashes.update(hash_many(root, todo, cancel, lambda p: progress and progress({**p, "phase": "Reading file contents…"})))
         files = {rel: (s, m, hashes.get(rel)) for rel, (s, m) in flat.items()}
+        del flat, hashes
+        _check(cancel)
 
+        phase("Comparing with the previous scan…")
         changes = diff_files(prev_files, files) if prev_files is not None else None
         snap_id = uuid.uuid4().hex[:12]
-        meta = {"id": snap_id, "root": root, "time": time.time(), "files": len(files), "bytes": result["bytes"],
-                "dirs": len(result["dirs"]), "hashed": bool(hashed), "errors": result["errors"],
+        meta = {"id": snap_id, "root": root, "time": time.time(), "files": len(files), "bytes": n_bytes,
+                "dirs": n_dirs, "hashed": bool(hashed), "errors": result["errors"],
                 "algo": "sha256", "cloud": result["cloud"], "ignored": result["ignored"],
-                "engine": result["engine"],
+                "engine": result["engine"], "engine_error": result.get("engine_error"),
                 "elapsed": time.monotonic() - t0, "prev": prev_meta["id"] if prev_meta else None,
                 "summary": ({k: (len(v) if isinstance(v, list) else v) for k, v in changes.items()}
                             if changes else None)}
-        payload = {"meta": meta, "files": {rel: list(v) for rel, v in files.items()}}
+        phase("Saving…")
         tmp = self.dir / f"{snap_id}.tmp"
-        with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=5) as f:
-            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-        os.replace(tmp, self.dir / f"{snap_id}.json.gz")
+        try:
+            _write_snapshot(tmp, meta, files)
+            _check(cancel)
+            os.replace(tmp, self.dir / f"{snap_id}.json.gz")
+        finally:
+            try:
+                tmp.unlink()   # only exists if something above failed
+            except OSError:
+                pass
         self._write_index(self.list() + [meta])
         return {"meta": meta, "changes": changes, "files": files, "prev_files": prev_files}
 
@@ -748,6 +917,34 @@ class SnapshotStore:
         except OSError:
             pass
         self._write_index([m for m in self.list() if m["id"] != snap_id])
+
+
+def _jstr(text):
+    """A JSON string literal. File names that are not valid Unicode (possible on Linux) are escaped so they
+    can still be written and read back unchanged."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return json.dumps(text)
+    return json.dumps(text, ensure_ascii=False)
+
+
+def _write_snapshot(path, meta, files, chunk=5000):
+    """
+    Stream the scan to disk, one file per line, in blocks. Same JSON as before ({"meta":..., "files":{...}}) but
+    without building a second 600,000-entry structure in memory just to serialise it.
+    """
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=3, newline="\n") as f:
+        f.write('{"meta":' + json.dumps(meta, ensure_ascii=False, separators=(",", ":")) + ',\n"files":{\n')
+        block, first = [], True
+        for rel, (size, m, h) in files.items():
+            block.append(f'{_jstr(rel)}:[{size},{m},{_jstr(h) if h else "null"}]')
+            if len(block) >= chunk:
+                f.write(("" if first else ",\n") + ",\n".join(block))
+                block, first = [], False
+        if block:
+            f.write(("" if first else ",\n") + ",\n".join(block))
+        f.write("\n}}\n")
 
 
 def _same_path(a, b):
@@ -770,7 +967,8 @@ def find_duplicates(root, min_size=1, skip_hidden=True, cancel=None, progress=No
     groups sorted by wasted space (largest first).
     """
     t0 = time.monotonic()
-    result = walk(root, cancel, lambda p: progress and progress({**p, "phase": "Scanning…"}), skip_hidden)
+    result = walk(root, cancel, lambda p: progress and progress({**p, "phase": "Scanning…"}), skip_hidden,
+                  dir_times=False)
     flat = flatten(result["dirs"])
     by_size = defaultdict(list)
     for rel, (size, _m) in flat.items():
@@ -860,7 +1058,8 @@ def build_size_tree(dirs, root_name="."):
 def scan_sizes(root, skip_hidden=True, cancel=None, progress=None):
     """Scan `root` and return {"root": Node (sizes rolled up), "files", "bytes", ...} for the Space tab."""
     t0 = time.monotonic()
-    result = walk(root, cancel, lambda p: progress and progress({**p, "phase": "Measuring…"}), skip_hidden)
+    result = walk(root, cancel, lambda p: progress and progress({**p, "phase": "Measuring…"}), skip_hidden,
+                  dir_times=False)
     tree = build_size_tree(result["dirs"], os.path.basename(os.path.abspath(root).rstrip("/\\")) or os.path.abspath(root))
     return {"root": tree, "path": os.path.abspath(root), "files": result["files"], "bytes": result["bytes"],
             "dirs": len(result["dirs"]), "errors": result["errors"], "cloud": result["cloud"],

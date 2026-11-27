@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"filepicker/engine/internal/fsattr"
 	"filepicker/engine/internal/ignore"
@@ -40,6 +41,10 @@ type Options struct {
 	Ignore     *ignore.Matcher
 	Known      map[string]Known // by relative dir path ("" = root)
 	Workers    int              // concurrent directory reads; 0 = auto
+	// NoDirTime skips reading each folder's own modified time (Dir.M stays 0). On a network
+	// drive that saves a full round trip per folder. Ignored when Known is set, because
+	// reusing saved folders needs the time.
+	NoDirTime bool
 }
 
 // File is serialised as [name, size, mtimeNs].
@@ -70,6 +75,9 @@ type Dir struct {
 	F    []File   `json:"f"`
 	D    []string `json:"d"` // sub-folder names
 }
+
+// Batchable lets the event writer buffer folder records (see events.Batchable).
+func (*Dir) Batchable() {}
 
 type Counters struct {
 	Files, Dirs, Bytes, Errors, Reused, Cloud, Ignored atomic.Int64
@@ -117,23 +125,42 @@ func Walk(ctx context.Context, opt Options, c *Counters, emit func(*Dir)) error 
 			}
 		}()
 	}
-	wg.Wait()
+	// After a cancel, a worker stuck in a file-system call (dead network drive,
+	// sleeping disk) may never return. Give them a moment, then give up on them
+	// instead of hanging forever; the process exits right after.
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		select {
+		case <-finished:
+		case <-time.After(CancelGrace):
+			return ctx.Err() // out is deliberately left open: stuck workers may still send
+		}
+	}
 	close(out)
 	<-done
 	return ctx.Err()
 }
+
+// CancelGrace is how long Walk waits for blocked workers after a cancel.
+var CancelGrace = 3 * time.Second
 
 func readDir(opt Options, rel string, c *Counters) *Dir {
 	path := opt.Root
 	if rel != "" {
 		path = filepath.Join(opt.Root, filepath.FromSlash(rel))
 	}
-	st, err := os.Stat(path)
-	if err != nil {
-		c.Errors.Add(1)
-		return nil
+	var m int64
+	if !opt.NoDirTime || opt.Known != nil {
+		st, err := os.Stat(path)
+		if err != nil {
+			c.Errors.Add(1)
+			return nil
+		}
+		m = st.ModTime().UnixNano()
 	}
-	m := st.ModTime().UnixNano()
 	c.Dirs.Add(1)
 	if k, ok := opt.Known[rel]; ok && k.M == m {
 		c.Reused.Add(1)

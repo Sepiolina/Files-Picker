@@ -26,9 +26,10 @@ type treeJob struct {
 	Root       string `json:"root"`
 	SkipHidden bool   `json:"skipHidden"`
 	SkipCloud  bool   `json:"skipCloud"`
-	Ignore     string `json:"ignore"`  // ignore rules, one per line
-	Known      string `json:"known"`   // optional path to JSON lines {"rel","m","d"} from an earlier scan
-	Workers    int    `json:"workers"` // 0 = auto
+	Ignore     string `json:"ignore"`    // ignore rules, one per line
+	Known      string `json:"known"`     // optional path to JSON lines {"rel","m","d"} from an earlier scan
+	Workers    int    `json:"workers"`   // 0 = auto
+	NoDirTime  bool   `json:"noDirTime"` // don't read each folder's own mtime (faster on network drives)
 }
 
 type hashJob struct {
@@ -99,7 +100,7 @@ func runTree(ctx context.Context, raw []byte, emit *events.Emitter) error {
 		return fmt.Errorf("%q is not a folder", j.Root)
 	}
 	opt := tree.Options{Root: j.Root, SkipHidden: j.SkipHidden, SkipCloud: j.SkipCloud,
-		Ignore: ignore.Parse(j.Ignore), Workers: j.Workers}
+		Ignore: ignore.Parse(j.Ignore), Workers: j.Workers, NoDirTime: j.NoDirTime}
 	if j.Known != "" {
 		known, err := loadKnown(j.Known)
 		if err != nil {

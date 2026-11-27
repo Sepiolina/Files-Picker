@@ -6,6 +6,7 @@ modified or moved since the previous scan - or since any older one.
 
 import csv
 import os
+import threading
 from collections import namedtuple
 from datetime import datetime
 
@@ -111,7 +112,14 @@ class ChangeModel(TableModel):
                 fmt_mtime(r.mtime) or "–"][c]
 
     def sort_key(self, r, c):
-        return {0: KIND_RANK[r.kind], 2: r.size or 0, 4: r.mtime or 0}.get(c, self.cell(r, c).lower())
+        # Called ~2 x N log N times when sorting: must be cheap (never format sizes or dates here).
+        if c == 0:
+            return KIND_RANK[r.kind]
+        if c == 2:
+            return r.size or 0
+        if c == 4:
+            return r.mtime or 0
+        return (r.rel if c == 1 else r.detail).lower()
 
     def color(self, r, c):
         return KIND[r.kind][1] if c == 0 else ("muted" if c in (2, 3, 4) else None)
@@ -120,16 +128,19 @@ class ChangeModel(TableModel):
         return c == 2
 
 
-def build_changes(changes, old, new):
-    """diff_files() output -> flat list of Change rows."""
+MAX_ROWS = 50_000   # rows loaded into the table; the counts and the CSV exports always cover every change
+
+
+def build_changes(changes, old, new, limit=None):
+    """diff_files() output -> flat list of Change rows (at most `limit`, most interesting kinds first)."""
     rows = []
-    for rel in changes["added"]:
-        s, m, _ = new[rel]
-        rows.append(Change("added", rel, s, m, ""))
-    for rel in changes["removed"]:
-        s, m, _ = old[rel]
-        rows.append(Change("removed", rel, s, m, ""))
+
+    def room():
+        return limit is None or len(rows) < limit
+
     for rel in changes["modified"]:
+        if not room():
+            break
         (s1, _, h1), (s2, m2, h2) = old[rel], new[rel]
         if s1 != s2:
             d = f"{'+' if s2 > s1 else '−'}{fmt_size(abs(s2 - s1))}"
@@ -137,8 +148,20 @@ def build_changes(changes, old, new):
             d = "content changed" if (h1 and h2) else "date changed"
         rows.append(Change("modified", rel, s2, m2, d))
     for a, b in changes["moved"]:
+        if not room():
+            break
         s, m, _ = new[b]
         rows.append(Change("moved", f"{a}  →  {b}", s, m, "renamed or moved"))
+    for rel in changes["removed"]:
+        if not room():
+            break
+        s, m, _ = old[rel]
+        rows.append(Change("removed", rel, s, m, ""))
+    for rel in changes["added"]:
+        if not room():
+            break
+        s, m, _ = new[rel]
+        rows.append(Change("added", rel, s, m, ""))
     return rows
 
 
@@ -154,7 +177,10 @@ class SnapshotPage(QWidget):
         self.snaps = F.SnapshotStore(store_root)
         self.worker = self.diff_worker = None
         self._files = {}        # snapshot id -> files (small in-memory cache)
+        self._files_lock = threading.Lock()   # two background loads must not load the same 600,000 files twice
         self._token = 0
+        self._counts = {}       # kind -> number of changes (all of them, not just the rows in the table)
+        self._last_diff = None  # (diff, old snapshot id, new snapshot id) behind the table
 
         # ================= left column: start a scan, browse the history =================
         self.path = PathField(PathField.FOLDER, "Folder to scan")
@@ -252,6 +278,7 @@ class SnapshotPage(QWidget):
         self.export_btn = button("Export", "download", tooltip="Save as CSV")
         export_menu = QMenu(self.export_btn)
         export_menu.addAction("Changes shown below (CSV)", self._export_changes)
+        export_menu.addAction("All changes (CSV)", self._export_all_changes)
         export_menu.addAction("Every file in this scan (CSV)", self._export_log)
         self.export_btn.setMenu(export_menu)
 
@@ -476,11 +503,12 @@ class SnapshotPage(QWidget):
     # ---- diff -------------------------------------------------------------------
 
     def _files_of(self, snap_id):
-        if snap_id not in self._files:
-            if len(self._files) >= 3:
-                self._files.pop(next(iter(self._files)))
-            self._files[snap_id] = self.snaps.load_files(snap_id)
-        return self._files[snap_id]
+        with self._files_lock:
+            if snap_id not in self._files:
+                while len(self._files) >= 2:     # a big scan is hundreds of MB: keep only the two being compared
+                    self._files.pop(next(iter(self._files)))
+                self._files[snap_id] = self.snaps.load_files(snap_id)
+            return self._files[snap_id]
 
     def _load_diff(self):
         m = self._sel()
@@ -502,10 +530,17 @@ class SnapshotPage(QWidget):
             return
         self.note.hide()
 
+        if self.diff_worker is not None:
+            self.diff_worker.cancel()   # the previous selection's result is no longer wanted
+
         def job(cancel, progress):
-            old, new = self._files_of(base), self._files_of(m["id"])
+            old = self._files_of(base)
+            F._check(cancel)
+            new = self._files_of(m["id"])
+            F._check(cancel)
             changes = F.diff_files(old, new)
-            return token, changes, build_changes(changes, old, new)
+            F._check(cancel)
+            return token, changes, build_changes(changes, old, new, MAX_ROWS), (base, m["id"])
 
         self.diff_worker = Worker(job, self)
         self.diff_worker.done.connect(self._diff_done)
@@ -513,14 +548,21 @@ class SnapshotPage(QWidget):
         self.diff_worker.start()
 
     def _diff_done(self, res):
-        token, changes, rows = res
+        token, changes, rows, ids = res
         if token != self._token:
             return  # the selection changed while this was loading
+        self._counts = {k: len(changes[k]) for k in KIND}
+        self._last_diff = (changes, *ids)
         for k in ("added", "removed", "modified", "moved"):
             self.tiles[k].set(fmt_int(len(changes[k])), None)
         self.tiles["unchanged"].set(fmt_int(changes["unchanged"]))
         self.changes.set_rows(rows, status_of=lambda r: r.kind)
-        if not rows:
+        total = sum(self._counts.values())
+        if total > len(rows):
+            self.note.setText(f"Showing the first {fmt_int(len(rows))} of {fmt_int(total)} changes so the window stays "
+                              "responsive. The totals above are complete, and Export → \"All changes\" saves every one.")
+            self.note.show()
+        elif not rows:
             self.note.setText("Nothing changed between these two scans.")
             self.note.show()
 
@@ -563,22 +605,27 @@ class SnapshotPage(QWidget):
     def _scan_done(self, res):
         self._busy(False)
         meta = res["meta"]
-        self._files[meta["id"]] = res["files"]
-        if res["prev_files"] is not None and meta["prev"]:
-            self._files.setdefault(meta["prev"], res["prev_files"])
+        with self._files_lock:   # keep just the two scans being compared (see _files_of)
+            self._files.clear()
+            if res["prev_files"] is not None and meta["prev"]:
+                self._files[meta["prev"]] = res["prev_files"]
+            self._files[meta["id"]] = res["files"]
         self.refresh(select_id=meta["id"])
         s = meta.get("summary")
+        slow = (f"The fast scanner stopped ({meta['engine_error']}), so this scan used the slower built-in one. "
+                if meta.get("engine_error") else "")
+        skipped = scan_note(meta.get("cloud", 0), meta.get("ignored", 0))
         if s is None:
-            self.banner.show_message("success", f"Saved — {fmt_int(meta['files'])} files logged",
+            self.banner.show_message("warn" if slow else "success", f"Saved — {fmt_int(meta['files'])} files logged",
                                      "This is the first scan of this folder. Scan it again later to see what changed. "
-                                     + scan_note(meta.get("cloud", 0), meta.get("ignored", 0)))
+                                     + skipped + slow)
         else:
             total = s["added"] + s["removed"] + s["modified"] + s["moved"]
             self.banner.show_message(
-                "warn" if total else "success",
+                "warn" if (total or slow) else "success",
                 f"{fmt_int(total)} changes since the previous scan" if total else "No changes since the previous scan",
                 (f"{fmt_int(s['added'])} added · {fmt_int(s['removed'])} removed · {fmt_int(s['modified'])} modified · "
-                 f"{fmt_int(s['moved'])} moved. " if total else "") + scan_note(meta.get("cloud", 0), meta.get("ignored", 0)))
+                 f"{fmt_int(s['moved'])} moved. " if total else "") + skipped + slow)
 
     # ---- actions --------------------------------------------------------------------
 
@@ -613,7 +660,10 @@ class SnapshotPage(QWidget):
         if not m:
             return
         rows = self.changes.model.rows
-        counts = {k: sum(1 for r in rows if r.kind == k) for k in KIND}
+        counts = dict(self._counts) or {k: sum(1 for r in rows if r.kind == k) for k in KIND}
+        report_cap = 20_000   # a 600,000-row HTML/PDF report is unusable; the totals above stay complete
+        shown_rows = sorted(rows, key=lambda r: (KIND_RANK[r.kind], r.rel.lower()))[:report_cap]
+        capped = sum(counts.values()) > len(shown_rows)
         base = self.baseline.currentText() if self.baseline.isEnabled() else ""
         folder_name = os.path.basename(m["root"].rstrip("/\\")) or m["root"]   # (no backslash inside an f-string: Python < 3.12)
         rep = R.Report(f"Folder changes — {folder_name}", m["root"])
@@ -628,8 +678,10 @@ class SnapshotPage(QWidget):
         rep.heading("Changes")
         rep.table(["Change", "File", "Size", "Details"],
                   [[KIND[r.kind][0], r.rel, fmt_size(r.size) if r.size is not None else "–", r.detail] for r in
-                   sorted(rows, key=lambda r: (KIND_RANK[r.kind], r.rel.lower()))], ["l", "l", "r", "l"],
-                  note=scan_note(m.get("cloud", 0), m.get("ignored", 0)) or ("" if base else "First scan of this folder."))
+                   shown_rows], ["l", "l", "r", "l"],
+                  note=((f"Showing the first {fmt_int(len(shown_rows))} of {fmt_int(sum(counts.values()))} changes — "
+                         "export the CSV for the full list. " if capped else "")
+                        + (scan_note(m.get("cloud", 0), m.get("ignored", 0)) or ("" if base else "First scan of this folder."))))
         try:
             path = R.ask_and_save(self, rep, f"changes_{when(m['time'], '%Y%m%d_%H%M')}")
         except OSError as e:
@@ -671,3 +723,19 @@ class SnapshotPage(QWidget):
             self._save_csv(f"changes_{when(m['time'], '%Y%m%d_%H%M')}.csv", ["Change", "Path", "Size (bytes)", "Details", "Modified"],
                            ([KIND[r.kind][0], r.rel, r.size if r.size is not None else "", r.detail, fmt_mtime(r.mtime)]
                             for r in self.changes.visible_rows()))
+
+    def _export_all_changes(self):
+        m = self._sel()
+        if not m or not self._last_diff:
+            return
+        changes, base_id, new_id = self._last_diff
+        try:
+            old, new = self._files_of(base_id), self._files_of(new_id)
+        except (OSError, ValueError) as e:
+            self.banner.show_message("danger", "Could not read the scan", str(e))
+            return
+        rows = build_changes(changes, old, new)
+        self._save_csv(f"all_changes_{when(m['time'], '%Y%m%d_%H%M')}.csv",
+                       ["Change", "Path", "Size (bytes)", "Details", "Modified"],
+                       ([KIND[r.kind][0], r.rel, r.size if r.size is not None else "", r.detail, fmt_mtime(r.mtime)]
+                        for r in rows))

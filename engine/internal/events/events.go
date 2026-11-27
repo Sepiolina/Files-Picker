@@ -5,6 +5,7 @@
 package events
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,24 +80,42 @@ type Cancelled struct {
 	Type string `json:"type"` // "cancelled"
 }
 
+// Batchable is implemented by high-volume events (one per folder). They are
+// buffered and written in large blocks; every other event flushes the buffer
+// first, so ordering is preserved and progress/done/error are never delayed.
+type Batchable interface{ Batchable() }
+
 // Emitter writes events; safe for use from several goroutines.
 type Emitter struct {
 	mu   sync.Mutex
-	w    io.Writer
+	w    *bufio.Writer
 	text bool
 }
 
-func NewEmitter(w io.Writer, text bool) *Emitter { return &Emitter{w: w, text: text} }
+func NewEmitter(w io.Writer, text bool) *Emitter {
+	return &Emitter{w: bufio.NewWriterSize(w, 256<<10), text: text}
+}
 
 func (e *Emitter) Emit(ev any) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.text {
 		fmt.Fprint(e.w, human(ev))
-		return
+	} else {
+		b, _ := json.Marshal(ev)
+		e.w.Write(b)
+		e.w.WriteByte('\n')
 	}
-	b, _ := json.Marshal(ev)
-	e.w.Write(append(b, '\n'))
+	if _, batch := ev.(Batchable); !batch {
+		e.w.Flush()
+	}
+}
+
+// Flush writes anything still buffered.
+func (e *Emitter) Flush() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.w.Flush()
 }
 
 func human(ev any) string {

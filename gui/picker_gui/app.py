@@ -82,6 +82,9 @@ def check():
 def main():
     if "--check" in sys.argv:
         return check()
+    # Heavy background work (parsing 600,000 files) is Python code too and competes with the window for the
+    # interpreter lock. Switching more often keeps scrolling and buttons responsive while a scan runs.
+    sys.setswitchinterval(0.001)
     app = QApplication(sys.argv)
     app.setOrganizationName("FilePicker")
     app.setApplicationName("FilePicker")  # decides where settings/history are stored

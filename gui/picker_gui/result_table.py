@@ -23,7 +23,9 @@ class ResultTable(QWidget):
 
         v = self.view = QTableView()
         v.setModel(self.proxy)
-        v.setSortingEnabled(True)
+        # Sorting is done here with list.sort (C speed) instead of by QSortFilterProxyModel, which calls back into
+        # Python ~2 x N log N times: 50,000 rows froze the window for seconds, 600,000 for minutes.
+        v.setSortingEnabled(False)
         v.setSelectionBehavior(QAbstractItemView.SelectRows)
         v.setSelectionMode(QAbstractItemView.SingleSelection)
         v.setShowGrid(False)
@@ -45,7 +47,11 @@ class ResultTable(QWidget):
         for c in range(model.columnCount()):
             h.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(stretch_col, QHeaderView.Stretch)
-        v.sortByColumn(*sort)
+        h.setSectionsClickable(True)
+        h.setSortIndicatorShown(True)
+        self._sort = tuple(sort)
+        h.setSortIndicator(*self._sort)
+        h.sortIndicatorChanged.connect(self._on_sort_indicator)
         v.doubleClicked.connect(lambda _: self._emit_activated())
         v.selectionModel().selectionChanged.connect(lambda *_: self.selection_changed.emit())
 
@@ -72,8 +78,21 @@ class ResultTable(QWidget):
         self._status_of = status_of
         self.proxy.set_predicate(None)
         self.show_all.hide()
-        self.model.set_rows(rows)
+        self.model.set_rows(self._sorted(rows))
         self._update_count()
+
+    def _sorted(self, rows):
+        col, order = self._sort
+        key = lambda r: self.model.sort_key(r, col)  # noqa: E731
+        reverse = order == Qt.DescendingOrder
+        try:
+            return sorted(rows, key=key, reverse=reverse)
+        except TypeError:   # a column that mixes numbers and missing values
+            return sorted(rows, key=lambda r: (key(r) is None, key(r) or 0), reverse=reverse)
+
+    def _on_sort_indicator(self, col, order):
+        self._sort = (col, order)
+        self.model.set_rows(self._sorted(self.model.rows))
 
     def set_status(self, status, label=""):
         """Show only rows whose status_of(row) == status (None shows everything)."""
@@ -92,6 +111,8 @@ class ResultTable(QWidget):
         return self.model.rows[self.proxy.mapToSource(rows[0]).row()] if rows else None
 
     def visible_rows(self):
+        if self.proxy.rowCount() == len(self.model.rows):   # nothing filtered out: the proxy keeps model order
+            return list(self.model.rows)
         return [self.model.rows[self.proxy.mapToSource(self.proxy.index(i, 0)).row()]
                 for i in range(self.proxy.rowCount())]
 

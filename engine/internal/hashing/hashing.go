@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // bufPool avoids allocating a fresh 1 MB buffer for every file.
@@ -106,8 +107,25 @@ func Run(ctx context.Context, opt Options, c *Counters, emit func(Result)) error
 		}
 	}()
 	go func() { wg.Wait(); close(results) }()
-	for r := range results {
-		emit(r)
+	// A worker blocked reading a hung file cannot be interrupted. After a cancel,
+	// stop waiting for it once the grace period is over.
+	var grace <-chan time.Time
+	cancelled := ctx.Done()
+	for {
+		select {
+		case r, ok := <-results:
+			if !ok {
+				return ctx.Err()
+			}
+			emit(r)
+		case <-cancelled:
+			cancelled = nil // fire once
+			grace = time.After(CancelGrace)
+		case <-grace:
+			return context.Canceled
+		}
 	}
-	return ctx.Err()
 }
+
+// CancelGrace is how long Run waits for blocked workers after a cancel.
+var CancelGrace = 3 * time.Second

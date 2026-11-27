@@ -125,3 +125,38 @@ func TestCancel(t *testing.T) {
 		t.Fatal("expected a cancellation error")
 	}
 }
+
+func TestNoDirTimeListsTheSameFilesWithoutFolderTimes(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "a.txt", "1")
+	write(t, root, "sub/b.txt", "22")
+	write(t, root, "sub/deep/c.txt", "333")
+
+	full, _ := walk(t, Options{Root: root})
+	fast, c := walk(t, Options{Root: root, NoDirTime: true})
+	if got, want := names(fast), names(full); len(got) != 3 || !equal(got, want) {
+		t.Fatalf("files differ: %v vs %v", got, want)
+	}
+	for rel, d := range fast {
+		if d.M != 0 {
+			t.Errorf("%q: folder time should be skipped, got %d", rel, d.M)
+		}
+	}
+	if c.Dirs.Load() != 3 || c.Files.Load() != 3 {
+		t.Fatalf("counts: %d dirs, %d files", c.Dirs.Load(), c.Files.Load())
+	}
+}
+
+func equal(a, b []string) bool {
+	sort.Strings(a)
+	sort.Strings(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
